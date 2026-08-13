@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Contact — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<div id="nav-root"></div>
+
+<header class="page-header">
+  <div class="container">
+    <span class="breadcrumb">Contact</span>
+    <h1>We'd love to hear from you.</h1>
+    <p>Product questions, wholesale enquiries, press — we respond within one working day.</p>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container" style="display:grid;grid-template-columns:1.2fr 1fr;gap:48px;align-items:start;">
+    <div class="card">
+      <form id="contact-form">
+        <div class="form-field"><label for="c-name">Name</label><input id="c-name" required /></div>
+        <div class="form-field"><label for="c-email">Email</label><input id="c-email" type="email" required /></div>
+        <div class="form-field"><label for="c-subject">Subject</label><input id="c-subject" /></div>
+        <div class="form-field"><label for="c-message">Message</label><textarea id="c-message" rows="5" required></textarea></div>
+        <button class="btn btn--primary" type="submit">Send Message</button>
+        <p class="form-success" id="contact-success" style="display:none;margin-top:14px;">Thanks — we'll be in touch within one working day.</p>
+        <p class="form-error" id="contact-error" style="display:none;"></p>
+      </form>
+    </div>
+    <div class="card stack">
+      <div><h4 style="margin-bottom:4px;">Email</h4><p style="color:var(--moss-700);">hello@grooveorganics.com</p></div>
+      <div><h4 style="margin-bottom:4px;">Phone</h4><p style="color:var(--moss-700);">+91 98765 43210</p></div>
+      <div><h4 style="margin-bottom:4px;">Studio</h4><p style="color:var(--moss-700);">Groove Organics, India</p></div>
+      <div><h4 style="margin-bottom:4px;">Hours</h4><p style="color:var(--moss-700);">Monday–Friday, 9am–6pm IST</p></div>
+    </div>
+  </div>
+</section>
+
+<div id="footer-root"></div>
+
+<script src="/js/api.js"></script>
+<script src="/js/cart.js"></script>
+<script src="/js/partials.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  renderNav('contact');
+  renderFooter();
+  document.getElementById('contact-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorEl = document.getElementById('contact-error');
+    const successEl = document.getElementById('contact-success');
+    errorEl.style.display = 'none';
+    try {
+      await api('/api/contact', {
+        method: 'POST',
+        auth: false,
+        body: {
+          name: document.getElementById('c-name').value,
+          email: document.getElementById('c-email').value,
+          subject: document.getElementById('c-subject').value,
+          message: document.getElementById('c-message').value,
+        },
+      });
+      document.getElementById('contact-form').reset();
+      successEl.style.display = 'block';
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.style.display = 'block';
+    }
+  });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Your Cart — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<div id="nav-root"></div>
+
+<header class="page-header">
+  <div class="container">
+    <span class="breadcrumb">Cart</span>
+    <h1>Your Cart</h1>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container" style="display:grid;grid-template-columns:2fr 1fr;gap:40px;align-items:start;">
+    <div class="card" id="cart-items">Loading…</div>
+    <div class="card" id="cart-summary"></div>
+  </div>
+</section>
+
+<div id="footer-root"></div>
+
+<script src="/js/api.js"></script>
+<script src="/js/cart.js"></script>
+<script src="/js/partials.js"></script>
+<script src="/js/cart-page.js"></script>
+</body>
+</html>

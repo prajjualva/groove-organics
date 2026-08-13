@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Order Confirmed — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<div id="nav-root"></div>
+
+<section class="section" style="padding-top:160px;">
+  <div class="container" id="confirmation-content" style="max-width:640px;">
+    <p>Loading your order…</p>
+  </div>
+</section>
+
+<div id="footer-root"></div>
+
+<script src="/js/api.js"></script>
+<script src="/js/cart.js"></script>
+<script src="/js/partials.js"></script>
+<script>
+async function loadConfirmation() {
+  const orderId = new URLSearchParams(window.location.search).get('orderId');
+  const wrap = document.getElementById('confirmation-content');
+  if (!orderId) {
+    wrap.innerHTML = '<div class="empty-state">No order specified.</div>';
+    return;
+  }
+  wrap.innerHTML = `
+    <span class="eyebrow">Thank you</span>
+    <h1>Your order is placed.</h1>
+    <p style="color:var(--moss-700);">A confirmation has been recorded. You can track its status below, and download your invoice any time.</p>
+    <div class="card" style="margin-top:24px;">
+      <div class="flex-between"><span>Order ID</span><span class="mono">${orderId}</span></div>
+      <div class="flex-between"><span>Status</span><span class="status-pill status-placed">Placed</span></div>
+    </div>
+    <a class="btn btn--primary" style="margin-top:24px;" href="/api/orders/${encodeURIComponent(orderId)}/invoice" target="_blank" rel="noopener">Download Invoice (PDF)</a>
+    <a class="btn btn--outline" style="margin-top:24px;margin-left:12px;" href="/shop">Continue Shopping</a>
+  `;
+}
+document.addEventListener('DOMContentLoaded', () => {
+  renderNav('');
+  renderFooter();
+  loadConfirmation();
+});
+</script>
+</body>
+</html>

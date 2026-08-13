@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Checkout — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<div id="nav-root"></div>
+
+<header class="page-header">
+  <div class="container">
+    <span class="breadcrumb">Checkout</span>
+    <h1>Checkout</h1>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container" style="display:grid;grid-template-columns:1.4fr 1fr;gap:40px;align-items:start;">
+    <div class="card">
+      <div class="banner-note" id="payment-mode-note" style="display:none;"></div>
+      <form id="checkout-form">
+        <h3 class="mt-0">Shipping Details</h3>
+        <div class="form-row">
+          <div class="form-field"><label for="name">Full name</label><input id="name" required /></div>
+          <div class="form-field"><label for="email">Email</label><input id="email" type="email" required /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-field"><label for="phone">Phone</label><input id="phone" required /></div>
+          <div class="form-field"><label for="pincode">Pincode</label><input id="pincode" required /></div>
+        </div>
+        <div class="form-field"><label for="line1">Address line 1</label><input id="line1" required /></div>
+        <div class="form-field"><label for="line2">Address line 2 (optional)</label><input id="line2" /></div>
+        <div class="form-row">
+          <div class="form-field"><label for="city">City</label><input id="city" required /></div>
+          <div class="form-field"><label for="state">State</label><input id="state" required /></div>
+        </div>
+        <button class="btn btn--primary" type="submit" id="pay-btn" style="width:100%;margin-top:8px;">Place Order &amp; Pay</button>
+        <p class="form-error" id="checkout-error" style="display:none;"></p>
+      </form>
+    </div>
+    <div class="card" id="checkout-summary"></div>
+  </div>
+</section>
+
+<div id="footer-root"></div>
+
+<script src="/js/api.js"></script>
+<script src="/js/cart.js"></script>
+<script src="/js/partials.js"></script>
+<script src="/js/checkout.js"></script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Staff Login — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body style="background:var(--moss-900);">
+
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;">
+  <div class="card" style="max-width:400px;width:100%;">
+    <h2 class="mt-0">Staff Login</h2>
+    <div class="banner-note" id="demo-note"></div>
+    <form id="login-form">
+      <div class="form-field"><label for="email">Email</label><input id="email" type="email" required /></div>
+      <div class="form-field"><label for="password">Password</label><input id="password" type="password" required /></div>
+      <button class="btn btn--dark" type="submit" style="width:100%;">Sign In</button>
+      <p class="form-error" id="login-error" style="display:none;"></p>
+    </form>
+    <p style="margin-top:16px;font-size:0.85rem;"><a href="/admin" style="text-decoration:underline;">Admin login</a> · <a href="/" style="text-decoration:underline;">Back to site</a></p>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+document.getElementById('demo-note').textContent =
+  'Demo mode: sign in with staff@demo.groove / demo1234. Once Supabase is connected, create real accounts there instead.';
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('login-error');
+  errorEl.style.display = 'none';
+  try {
+    const { token, user } = await api('/api/auth/login', {
+      method: 'POST',
+      auth: false,
+      body: { email: document.getElementById('email').value, password: document.getElementById('password').value },
+    });
+    setAuthSession(token, user);
+    const me = await api('/api/auth/me');
+    if (!['staff', 'admin'].includes(me.user.role)) {
+      clearAuthSession();
+      throw new Error('This account does not have staff access.');
+    }
+    window.location.href = '/staff/dashboard';
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+  }
+});
+</script>
+</body>
+</html>

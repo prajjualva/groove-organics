@@ -1,0 +1,11 @@
+{
+  "name": "groove-organics",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Groove Organics e-commerce site (storefront + admin/staff dashboards)",
+  "scripts": {
+    "dev": "cd backend && npm run dev",
+    "start": "cd backend && npm start",
+    "install:all": "cd backend && npm install"
+  }
+}

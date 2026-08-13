@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin Dashboard — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<header class="page-header" style="padding:32px 0;">
+  <div class="container flex-between">
+    <div>
+      <span class="breadcrumb">Admin</span>
+      <h1 style="font-size:1.8rem;margin:0;">Dashboard</h1>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;">
+      <span id="admin-whoami" class="mono" style="font-size:0.85rem;opacity:0.8;"></span>
+      <button class="btn btn--outline btn--sm" id="logout-btn">Log Out</button>
+    </div>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container">
+    <div class="banner-note" id="mode-note" style="display:none;"></div>
+    <div class="dashboard-nav">
+      <button class="active" data-tab="products">Products</button>
+      <button data-tab="orders">Orders</button>
+      <button data-tab="banners">Banners</button>
+      <button data-tab="reports">Reports</button>
+    </div>
+    <div id="tab-content"><p>Loading…</p></div>
+  </div>
+</section>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin.js"></script>
+</body>
+</html>

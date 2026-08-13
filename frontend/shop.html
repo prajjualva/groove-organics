@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shop — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<div id="nav-root"></div>
+
+<header class="page-header">
+  <div class="container">
+    <span class="breadcrumb">Shop</span>
+    <h1>Our Oils</h1>
+    <p>Cold-pressed and wood-pressed, small batch. More categories join this shelf as we grow.</p>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container">
+    <div class="flex-between" style="margin-bottom:28px;">
+      <div class="dashboard-nav" id="category-filters">
+        <button class="active" data-filter="all">All</button>
+      </div>
+      <div class="form-field" style="margin:0;min-width:200px;">
+        <label class="visually-hidden" for="sort-select">Sort by</label>
+        <select id="sort-select">
+          <option value="featured">Sort: Featured</option>
+          <option value="price-asc">Price: Low to High</option>
+          <option value="price-desc">Price: High to Low</option>
+          <option value="rating">Top Rated</option>
+        </select>
+      </div>
+    </div>
+    <div class="products-grid" id="shop-products">
+      <p>Loading products…</p>
+    </div>
+  </div>
+</section>
+
+<div id="footer-root"></div>
+
+<script src="/js/api.js"></script>
+<script src="/js/cart.js"></script>
+<script src="/js/partials.js"></script>
+<script src="/js/products-render.js"></script>
+<script src="/js/shop.js"></script>
+</body>
+</html>

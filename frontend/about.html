@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Our Story — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<div id="nav-root"></div>
+
+<header class="page-header">
+  <div class="container">
+    <span class="breadcrumb">Our Story</span>
+    <h1>Rooted in soil, grown by hand.</h1>
+    <p>A slower way to care — premium, ethically-crafted botanicals in small batches, from farms we know by name.</p>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container" style="display:grid;grid-template-columns:repeat(3,1fr);gap:32px;text-align:center;">
+    <div class="card"><h2 class="mono" style="font-family:var(--font-mono);">12</h2><p>Partner farms</p></div>
+    <div class="card"><h2 class="mono" style="font-family:var(--font-mono);">48</h2><p>Small-batch formulas</p></div>
+    <div class="card"><h2 class="mono" style="font-family:var(--font-mono);">100%</h2><p>Recyclable packaging</p></div>
+  </div>
+</section>
+
+<section class="section section--dark">
+  <div class="container story">
+    <div class="story__text reveal">
+      <span class="eyebrow">Our Journey</span>
+      <h2>A slower way to care.</h2>
+      <p>We partner with named farmers, craft in small batches, and package in earth-friendly glass — prioritizing meaningful self-care rituals over chasing sales volume.</p>
+      <div class="story__milestones">
+        <div class="story__milestone"><span class="mono">2018</span><span>Founder started blending botanical oils in a farmhouse kitchen.</span></div>
+        <div class="story__milestone"><span class="mono">2020</span><span>Established a countryside studio with three artisans.</span></div>
+        <div class="story__milestone"><span class="mono">2022</span><span>Achieved organic and cruelty-free certification for core formulas.</span></div>
+        <div class="story__milestone"><span class="mono">2024</span><span>Launched a returnable-glass refill initiative with 40 retail partners.</span></div>
+      </div>
+    </div>
+    <div class="story__ring-wrap reveal">
+      <svg class="story__ring" viewBox="0 0 200 200" fill="none">
+        <circle cx="100" cy="100" r="94" stroke="#C9A227" stroke-width="0.6" stroke-dasharray="2 6"/>
+        <circle cx="100" cy="100" r="72" stroke="#C9A227" stroke-width="0.6" stroke-dasharray="1 5" opacity="0.7"/>
+        <circle cx="100" cy="100" r="50" stroke="#FBF6EC" stroke-width="0.8" opacity="0.5"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section class="section center">
+  <div class="container" style="max-width:640px;">
+    <h2>Nature's purity. Crafted for everyday wellness.</h2>
+    <p style="color:var(--moss-700);">Sustainable, cruelty-free botanical care — made to fit into daily rituals, not just shelves.</p>
+    <a href="/shop" class="btn btn--primary">Shop Our Oils</a>
+  </div>
+</section>
+
+<div id="footer-root"></div>
+
+<script src="/js/api.js"></script>
+<script src="/js/cart.js"></script>
+<script src="/js/partials.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => { renderNav('about'); renderFooter(); });
+</script>
+</body>
+</html>

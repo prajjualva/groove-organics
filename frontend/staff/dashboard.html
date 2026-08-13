@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Staff Dashboard — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<header class="page-header" style="padding:32px 0;">
+  <div class="container flex-between">
+    <div>
+      <span class="breadcrumb">Staff</span>
+      <h1 style="font-size:1.8rem;margin:0;">Orders</h1>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;">
+      <span id="staff-whoami" class="mono" style="font-size:0.85rem;opacity:0.8;"></span>
+      <button class="btn btn--outline btn--sm" id="logout-btn">Log Out</button>
+    </div>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container">
+    <p style="color:var(--moss-700);margin-bottom:24px;">Mark orders as packed, shipped, or delivered as they move through fulfillment. Product and pricing changes are admin-only.</p>
+    <div id="orders-content"><p>Loading…</p></div>
+  </div>
+</section>
+
+<script src="/js/api.js"></script>
+<script src="/js/staff.js"></script>
+</body>
+</html>
