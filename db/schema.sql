@@ -72,6 +72,13 @@ create table if not exists public.products (
   rating numeric(2,1) default 4.9,
   review_count integer default 0,
   sort_order integer default 0,
+  -- Per-product GST rate override, since real HSN/GST rates vary by product
+  -- category in India (e.g. 5% / 12% / 18%). Leave null to use the store's
+  -- default rate (GST_RATE_PERCENT in backend/.env, 5% out of the box).
+  gst_rate_percent numeric(4,1),
+  -- Extra shipping charge for this item, added per unit ordered (e.g. a
+  -- heavier product costs more to ship). 0 = no extra charge for this item.
+  shipping_charge_paise integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -110,7 +117,13 @@ create table if not exists public.order_items (
   variant_label text,               -- snapshot like "500ml / Green" at time of purchase
   unit_price_paise integer not null,
   quantity integer not null,
-  line_total_paise integer not null
+  line_total_paise integer not null,
+  -- Snapshots of the rate/charge actually applied at checkout time (the
+  -- product's own rate may change later — the invoice should still show
+  -- what the customer was actually charged).
+  gst_rate_percent numeric(4,1) not null default 0,
+  line_gst_paise integer not null default 0,
+  line_shipping_paise integer not null default 0
 );
 
 -- ---------------------------------------------------------------------

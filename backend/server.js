@@ -44,6 +44,10 @@ app.get('/api/status', (req, res) => {
     supabaseConfigured,
     razorpayConfigured,
     mode: supabaseConfigured ? 'live-data' : 'demo-data',
+    // Default GST rate used for any product that doesn't set its own
+    // gst_rate_percent override — lets the frontend show an accurate
+    // estimate before checkout without hardcoding "5%" everywhere.
+    defaultGstRatePercent: Number(process.env.GST_RATE_PERCENT || 5),
   });
 });
 

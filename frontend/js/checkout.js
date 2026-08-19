@@ -1,9 +1,17 @@
-function renderCheckoutSummary() {
+async function renderCheckoutSummary() {
   const items = getCart();
   const wrap = document.getElementById('checkout-summary');
-  const subtotal = cartSubtotalPaise();
-  const gstRate = 5;
-  const gst = Math.round((subtotal * gstRate) / 100);
+  // Mirrors the backend's per-product GST/shipping math (see cart.js's
+  // cartEstimate) — the order confirmation/invoice show the authoritative
+  // figures the backend actually calculated at order-creation time.
+  let defaultGstRatePercent = 5;
+  try {
+    const status = await api('/api/status', { auth: false });
+    defaultGstRatePercent = status.defaultGstRatePercent ?? 5;
+  } catch {
+    // fall back to the 5% default if the status endpoint is unreachable
+  }
+  const { subtotal, gst, shipping, total } = cartEstimate(defaultGstRatePercent);
   wrap.innerHTML = `
     <h3 class="mt-0">Order Summary</h3>
     ${items
@@ -13,8 +21,9 @@ function renderCheckoutSummary() {
       .join('')}
     <hr style="border:none;border-top:1px solid var(--sand-300);margin:16px 0;" />
     <div class="flex-between"><span>Subtotal</span><span class="mono">${formatRupees(subtotal)}</span></div>
-    <div class="flex-between"><span>GST (est. ${gstRate}%)</span><span class="mono">${formatRupees(gst)}</span></div>
-    <div class="flex-between" style="font-weight:700;"><span>Total</span><span class="mono">${formatRupees(subtotal + gst)}</span></div>
+    <div class="flex-between"><span>GST (est.)</span><span class="mono">${formatRupees(gst)}</span></div>
+    <div class="flex-between"><span>Shipping</span><span class="mono">${shipping > 0 ? formatRupees(shipping) : 'Free'}</span></div>
+    <div class="flex-between" style="font-weight:700;"><span>Total</span><span class="mono">${formatRupees(total)}</span></div>
   `;
 }
 

@@ -43,13 +43,15 @@ router.get('/:id/invoice', async (req, res, next) => {
     doc.moveDown(0.5);
     const items = order.order_items || [];
     items.forEach((item) => {
+      const name = item.variant_label ? `${item.product_name} (${item.variant_label})` : item.product_name;
       doc
         .fontSize(10)
-        .text(
-          `${item.product_name}  x${item.quantity}  —  ${formatRupees(item.unit_price_paise)} each  =  ${formatRupees(
-            item.line_total_paise
-          )}`
-        );
+        .text(`${name}  x${item.quantity}  —  ${formatRupees(item.unit_price_paise)} each  =  ${formatRupees(item.line_total_paise)}`);
+      const gstNote = item.gst_rate_percent ? `GST @ ${item.gst_rate_percent}%: ${formatRupees(item.line_gst_paise || 0)}` : '';
+      const shipNote = item.line_shipping_paise ? `Shipping: ${formatRupees(item.line_shipping_paise)}` : '';
+      if (gstNote || shipNote) {
+        doc.fontSize(8).fillColor('gray').text([gstNote, shipNote].filter(Boolean).join('   ')).fillColor('black');
+      }
     });
     doc.moveDown();
 

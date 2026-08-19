@@ -56,10 +56,17 @@ Built so far (franchise logins still deferred to a later phase):
   calculation, PDF invoices
 - Real product photo uploads from the admin dashboard (no more placeholder icons once you upload one)
 - Customer accounts: register/login, order history, saved addresses, wishlist, product reviews & ratings
-- Admin dashboard: Products (image upload, category, stock, variants), Categories (parent + subcategory
-  tree), Orders (view/update status), Banners (hero slider slides + festive-offer/promo cards + a
-  sitewide announcement strip — one flexible tool for all of it), **Homepage Content** (edit every word
-  of the hero, feature strip, story and process sections without touching code), basic sales report
+- Admin dashboard: Products (image upload, category, stock, variants, **per-product GST rate and
+  shipping charge** — see below), Categories (parent + subcategory tree), Orders (view/update status),
+  Banners (hero slider slides + festive-offer/promo cards + a sitewide announcement strip — one flexible
+  tool for all of it), **Homepage Content** (edit every word of the hero, feature strip, story and
+  process sections without touching code), basic sales report
+- **Per-product GST + shipping**: each product can be given its own GST rate (leave blank to use the
+  store-wide default in `backend/.env`) and its own extra shipping charge per unit — real GST rates in
+  India vary by product category (5% / 12% / 18%...), and some products genuinely cost more to ship. Set
+  these in Admin → Products, right next to Stock. The backend looks up each product's actual rate/charge
+  at checkout (never trusts what the shopper's cart says), so the invoice and order total are always
+  correct even if someone tampers with the page.
 - Staff dashboard: order status updates only
 - Order tracking pipeline: Placed → Packed → Shipped → Delivered (a plain status field today — see
   "Worth doing next" below for adding real carrier tracking numbers/links)

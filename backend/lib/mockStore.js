@@ -40,6 +40,8 @@ const products = [
     rating: 4.9,
     review_count: 412,
     sort_order: 1,
+    gst_rate_percent: null, // null = use the store-wide default rate (GST_RATE_PERCENT env var)
+    shipping_charge_paise: 0, // 0 = free shipping for this item
   },
   {
     id: 'p2',
@@ -61,6 +63,8 @@ const products = [
     rating: 4.9,
     review_count: 286,
     sort_order: 2,
+    gst_rate_percent: null,
+    shipping_charge_paise: 0,
   },
   {
     id: 'p3',
@@ -82,6 +86,8 @@ const products = [
     rating: null,
     review_count: 0,
     sort_order: 3,
+    gst_rate_percent: null,
+    shipping_charge_paise: 0,
   },
 ];
 

@@ -52,7 +52,12 @@ function readFileAsDataUrl(file) {
 async function renderProductsTab() {
   const wrap = document.getElementById('tab-content');
   wrap.innerHTML = '<p>Loading products…</p>';
-  const [{ products }, { categories }] = await Promise.all([api('/api/products'), api('/api/categories', { auth: false })]);
+  const [{ products }, { categories }, status] = await Promise.all([
+    api('/api/products'),
+    api('/api/categories', { auth: false }),
+    api('/api/status', { auth: false }),
+  ]);
+  const defaultGstRatePercent = status.defaultGstRatePercent ?? 5;
 
   wrap.innerHTML = `
     <div class="card" style="margin-bottom:24px;">
@@ -69,6 +74,16 @@ async function renderProductsTab() {
             <select id="p-category" required>${categoryOptionsHtml(categories, null)}</select>
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="p-gst">GST rate % <span style="font-weight:400;color:var(--moss-700);">(leave blank to use the store default, ${defaultGstRatePercent}%)</span></label>
+            <input id="p-gst" type="number" min="0" max="28" step="0.1" placeholder="${defaultGstRatePercent}" />
+          </div>
+          <div class="form-field">
+            <label for="p-shipping">Extra shipping (₹ per unit) <span style="font-weight:400;color:var(--moss-700);">(0 = free shipping)</span></label>
+            <input id="p-shipping" type="number" min="0" step="0.01" placeholder="0" />
+          </div>
+        </div>
         <div class="form-field"><label for="p-short">Short description</label><input id="p-short" /></div>
         <div class="form-field"><label for="p-desc">Full description</label><textarea id="p-desc" rows="3"></textarea></div>
         <div class="form-field"><label for="p-image">Product image</label><input id="p-image" type="file" accept="image/*" /></div>
@@ -77,8 +92,9 @@ async function renderProductsTab() {
       </form>
     </div>
     <div class="card">
+      <p style="font-size:0.85rem;color:var(--moss-700);margin-top:0;">GST and shipping fields below: leave GST blank to use the store default (${defaultGstRatePercent}%); different products can carry different GST rates (e.g. 5% vs 12% vs 18%) since that's how it actually works under Indian GST law. Shipping is an extra charge added per unit of that product in the order — 0 means free shipping for it.</p>
       <table class="data-table">
-        <thead><tr><th>Image</th><th>Name</th><th>Price</th><th>Category</th><th>Stock</th><th>Active</th><th>Variants</th><th></th></tr></thead>
+        <thead><tr><th>Image</th><th>Name</th><th>Price</th><th>Category</th><th>Stock</th><th>GST %</th><th>Ship ₹/unit</th><th>Active</th><th>Variants</th><th></th></tr></thead>
         <tbody id="products-tbody"></tbody>
       </table>
     </div>
@@ -101,15 +117,36 @@ async function renderProductsTab() {
           <select data-category="${p.id}">${categoryOptionsHtml(categories, p.category_id)}</select>
         </td>
         <td><input type="number" min="0" value="${p.stock}" data-stock="${p.id}" style="width:70px;padding:6px;border-radius:6px;border:1px solid var(--sand-300);" /></td>
+        <td><input type="number" min="0" max="28" step="0.1" value="${p.gst_rate_percent != null ? p.gst_rate_percent : ''}" placeholder="${defaultGstRatePercent}" data-gst="${p.id}" style="width:64px;padding:6px;border-radius:6px;border:1px solid var(--sand-300);" /></td>
+        <td><input type="number" min="0" step="0.01" value="${p.shipping_charge_paise ? (p.shipping_charge_paise / 100).toFixed(2) : ''}" placeholder="0" data-shipping="${p.id}" style="width:70px;padding:6px;border-radius:6px;border:1px solid var(--sand-300);" /></td>
         <td><input type="checkbox" data-active="${p.id}" ${p.is_active ? 'checked' : ''} /></td>
         <td><button class="btn btn--outline btn--sm" data-toggle-variants="${p.id}">Sizes / Colors</button></td>
         <td><button class="btn btn--outline btn--sm" data-delete="${p.id}">Delete</button></td>
       </tr>
       <tr class="variants-row" data-variants-for="${p.id}" style="display:none;">
-        <td colspan="8"><div class="variants-panel" data-variants-panel="${p.id}"></div></td>
+        <td colspan="10"><div class="variants-panel" data-variants-panel="${p.id}"></div></td>
       </tr>`
     )
     .join('');
+
+  tbody.querySelectorAll('[data-gst]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const raw = input.value.trim();
+      await api(`/api/products/${input.getAttribute('data-gst')}`, {
+        method: 'PATCH',
+        body: { gst_rate_percent: raw === '' ? null : parseFloat(raw) },
+      });
+    });
+  });
+  tbody.querySelectorAll('[data-shipping]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const raw = input.value.trim();
+      await api(`/api/products/${input.getAttribute('data-shipping')}`, {
+        method: 'PATCH',
+        body: { shipping_charge_paise: raw === '' ? 0 : Math.round(parseFloat(raw) * 100) },
+      });
+    });
+  });
 
   tbody.querySelectorAll('[data-toggle-variants]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -171,6 +208,8 @@ async function renderProductsTab() {
       const image_url = imageFile ? await readFileAsDataUrl(imageFile) : null;
       const categoryId = document.getElementById('p-category').value;
       const category = categoryLabel(categories, categoryId).split(' / ')[0].toLowerCase();
+      const gstRaw = document.getElementById('p-gst').value.trim();
+      const shippingRaw = document.getElementById('p-shipping').value.trim();
       await api('/api/products', {
         method: 'POST',
         body: {
@@ -179,6 +218,8 @@ async function renderProductsTab() {
           price_paise: Math.round(parseFloat(document.getElementById('p-price').value) * 100),
           category_id: categoryId,
           category,
+          gst_rate_percent: gstRaw === '' ? null : parseFloat(gstRaw),
+          shipping_charge_paise: shippingRaw === '' ? 0 : Math.round(parseFloat(shippingRaw) * 100),
           short_description: document.getElementById('p-short').value,
           description: document.getElementById('p-desc').value,
           image_url,

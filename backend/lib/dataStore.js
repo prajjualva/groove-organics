@@ -86,6 +86,19 @@ async function getProductBySlug(slug) {
   return mock.products.find((p) => p.slug === slug) || null;
 }
 
+// Used at checkout to look up each line item's authoritative GST rate /
+// shipping charge server-side — the client's cart shouldn't be the source
+// of truth for tax math, even in demo mode.
+async function getProductById(id) {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client.from('products').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  return mock.products.find((p) => p.id === id) || null;
+}
+
 async function createProduct(input) {
   if (isConfigured) {
     if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
@@ -160,10 +173,37 @@ async function getOrder(id) {
   return mock.orders.find((o) => o.id === id) || null;
 }
 
+// Each product can override the store's default GST rate and can add its
+// own per-unit shipping charge (see products.gst_rate_percent /
+// shipping_charge_paise in db/schema.sql) — e.g. a product taxed at 12%
+// instead of the default 5%, or a heavier item that costs more to ship.
+// This looks up the authoritative rate/charge per line item server-side
+// rather than trusting whatever the shopper's cart happened to send.
+async function priceOrderItems(items, defaultGstRatePercent) {
+  return Promise.all(
+    items.map(async (i) => {
+      const product = i.product_id ? await getProductById(i.product_id).catch(() => null) : null;
+      const gstRate = product && product.gst_rate_percent != null ? Number(product.gst_rate_percent) : Number(defaultGstRatePercent);
+      const shippingPerUnit = product && product.shipping_charge_paise ? Number(product.shipping_charge_paise) : 0;
+      const lineSubtotal = i.unit_price_paise * i.quantity;
+      return {
+        ...i,
+        gst_rate_percent: gstRate,
+        line_gst_paise: Math.round((lineSubtotal * gstRate) / 100),
+        line_shipping_paise: shippingPerUnit * i.quantity,
+        line_total_paise: lineSubtotal,
+      };
+    })
+  );
+}
+
 async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0, userId = null }) {
-  const subtotalPaise = items.reduce((sum, i) => sum + i.unit_price_paise * i.quantity, 0);
-  const gstPaise = Math.round((subtotalPaise * gstRatePercent) / 100);
-  const totalPaise = subtotalPaise + gstPaise + shippingPaise;
+  const pricedItems = await priceOrderItems(items, gstRatePercent);
+  const subtotalPaise = pricedItems.reduce((sum, i) => sum + i.line_total_paise, 0);
+  const gstPaise = pricedItems.reduce((sum, i) => sum + i.line_gst_paise, 0);
+  const productShippingPaise = pricedItems.reduce((sum, i) => sum + i.line_shipping_paise, 0);
+  const totalShippingPaise = shippingPaise + productShippingPaise;
+  const totalPaise = subtotalPaise + gstPaise + totalShippingPaise;
 
   if (isConfigured) {
     if (!supabaseAdmin) throw new Error('Creating orders needs SUPABASE_SERVICE_ROLE_KEY set.');
@@ -179,7 +219,7 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
         shipping_address: customer.address,
         subtotal_paise: subtotalPaise,
         gst_paise: gstPaise,
-        shipping_paise: shippingPaise,
+        shipping_paise: totalShippingPaise,
         total_paise: totalPaise,
         status: 'placed',
         payment_status: 'pending',
@@ -188,7 +228,7 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
       .single();
     if (error) throw error;
 
-    const orderItems = items.map((i) => ({
+    const orderItems = pricedItems.map((i) => ({
       order_id: order.id,
       product_id: i.product_id,
       product_name: i.name,
@@ -196,7 +236,10 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
       variant_label: i.variant_label || null,
       unit_price_paise: i.unit_price_paise,
       quantity: i.quantity,
-      line_total_paise: i.unit_price_paise * i.quantity,
+      line_total_paise: i.line_total_paise,
+      gst_rate_percent: i.gst_rate_percent,
+      line_gst_paise: i.line_gst_paise,
+      line_shipping_paise: i.line_shipping_paise,
     }));
     const { error: itemsError } = await supabaseAdmin.from('order_items').insert(orderItems);
     if (itemsError) throw itemsError;
@@ -214,7 +257,7 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
     shipping_address: customer.address,
     subtotal_paise: subtotalPaise,
     gst_paise: gstPaise,
-    shipping_paise: shippingPaise,
+    shipping_paise: totalShippingPaise,
     total_paise: totalPaise,
     status: 'placed',
     payment_status: 'pending',
@@ -223,14 +266,17 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
     payment_id: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-    order_items: items.map((i) => ({
+    order_items: pricedItems.map((i) => ({
       product_id: i.product_id,
       product_name: i.name,
       variant_id: i.variant_id || null,
       variant_label: i.variant_label || null,
       unit_price_paise: i.unit_price_paise,
       quantity: i.quantity,
-      line_total_paise: i.unit_price_paise * i.quantity,
+      line_total_paise: i.line_total_paise,
+      gst_rate_percent: i.gst_rate_percent,
+      line_gst_paise: i.line_gst_paise,
+      line_shipping_paise: i.line_shipping_paise,
     })),
   };
   mock.orders.push(order);
@@ -692,6 +738,7 @@ module.exports = {
   deleteCategory,
   listProducts,
   getProductBySlug,
+  getProductById,
   createProduct,
   updateProduct,
   deleteProduct,

@@ -34,6 +34,13 @@ function addToCart(product, quantity = 1, variant = null) {
       variant_id: variantId,
       variant_label: variant ? variant.label : null,
       unit_price_paise: variant ? variant.price_paise : product.price_paise,
+      // Carried along purely so the cart/checkout pages can show an accurate
+      // GST + shipping estimate before placing the order — the backend
+      // re-looks-up the authoritative rate/charge from the product record
+      // itself when the order is actually created, so this can't be spoofed
+      // into a real discount.
+      gst_rate_percent: product.gst_rate_percent != null ? product.gst_rate_percent : null,
+      shipping_charge_paise: product.shipping_charge_paise || 0,
       quantity,
     });
   }
@@ -62,4 +69,25 @@ function clearCart() {
 
 function cartSubtotalPaise() {
   return getCart().reduce((sum, i) => sum + i.unit_price_paise * i.quantity, 0);
+}
+
+// Pre-checkout estimate — mirrors the backend's per-product GST rate /
+// shipping charge math (see dataStore.js's priceOrderItems) so what the
+// shopper sees on the cart/checkout page matches what they're actually
+// charged. `defaultGstRatePercent` comes from GET /api/status for any item
+// that doesn't carry its own rate (e.g. products added to the cart before
+// this feature shipped).
+function cartEstimate(defaultGstRatePercent = 5) {
+  const items = getCart();
+  let subtotal = 0;
+  let gst = 0;
+  let shipping = 0;
+  items.forEach((i) => {
+    const lineSubtotal = i.unit_price_paise * i.quantity;
+    const rate = i.gst_rate_percent != null ? i.gst_rate_percent : defaultGstRatePercent;
+    subtotal += lineSubtotal;
+    gst += Math.round((lineSubtotal * rate) / 100);
+    shipping += (i.shipping_charge_paise || 0) * i.quantity;
+  });
+  return { subtotal, gst, shipping, total: subtotal + gst + shipping };
 }
