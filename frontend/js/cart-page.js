@@ -12,15 +12,15 @@ function renderCartPage() {
   itemsWrap.innerHTML = items
     .map(
       (item) => `
-      <div class="flex-between" style="padding:16px 0;border-bottom:1px solid var(--sand-300);" data-row="${item.product_id}">
+      <div class="flex-between" style="padding:16px 0;border-bottom:1px solid var(--sand-300);" data-row="${item.product_id}" data-variant-row="${item.variant_id || ''}">
         <div>
-          <h3 style="margin-bottom:4px;">${item.name}</h3>
+          <h3 style="margin-bottom:4px;">${item.name}${item.variant_label ? ` <span style="font-weight:400;font-size:0.85rem;color:var(--moss-700);">(${item.variant_label})</span>` : ''}</h3>
           <span class="mono" style="font-size:0.85rem;color:var(--moss-700);">${formatRupees(item.unit_price_paise)} each</span>
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
-          <input type="number" min="1" value="${item.quantity}" data-qty="${item.product_id}" style="width:64px;padding:8px;border-radius:8px;border:1px solid var(--sand-300);" />
+          <input type="number" min="1" value="${item.quantity}" data-qty="${item.product_id}" data-qty-variant="${item.variant_id || ''}" style="width:64px;padding:8px;border-radius:8px;border:1px solid var(--sand-300);" />
           <span class="mono" style="min-width:90px;text-align:right;">${formatRupees(item.unit_price_paise * item.quantity)}</span>
-          <button class="btn btn--outline btn--sm" data-remove="${item.product_id}">Remove</button>
+          <button class="btn btn--outline btn--sm" data-remove="${item.product_id}" data-remove-variant="${item.variant_id || ''}">Remove</button>
         </div>
       </div>`
     )
@@ -43,13 +43,13 @@ function renderCartPage() {
   itemsWrap.querySelectorAll('[data-qty]').forEach((input) => {
     input.addEventListener('change', () => {
       const qty = Math.max(1, parseInt(input.value, 10) || 1);
-      setCartQuantity(input.getAttribute('data-qty'), qty);
+      setCartQuantity(input.getAttribute('data-qty'), qty, input.getAttribute('data-qty-variant') || null);
       renderCartPage();
     });
   });
   itemsWrap.querySelectorAll('[data-remove]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      removeFromCart(btn.getAttribute('data-remove'));
+      removeFromCart(btn.getAttribute('data-remove'), btn.getAttribute('data-remove-variant') || null);
       renderCartPage();
     });
   });

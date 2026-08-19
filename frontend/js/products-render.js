@@ -59,7 +59,29 @@ function productCardHtml(product) {
     </div>`;
 }
 
+// Subtle 3D tilt on hover, following the cursor — the .product-card
+// element already has perspective/preserve-3d set up in CSS for this.
+// Skipped for visitors who prefer reduced motion.
+function wireProductCardTilt(container) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  container.querySelectorAll('.product-card').forEach((card) => {
+    const maxTilt = 6; // degrees
+    function onMove(e) {
+      const rect = card.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width - 0.5;
+      const y = (e.clientY - rect.top) / rect.height - 0.5;
+      card.style.transform = `rotateY(${x * maxTilt * 2}deg) rotateX(${-y * maxTilt * 2}deg) translateY(-4px)`;
+    }
+    function onLeave() {
+      card.style.transform = '';
+    }
+    card.addEventListener('mousemove', onMove);
+    card.addEventListener('mouseleave', onLeave);
+  });
+}
+
 function wireProductCardButtons(container, products) {
+  wireProductCardTilt(container);
   container.querySelectorAll('[data-add-to-cart]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();

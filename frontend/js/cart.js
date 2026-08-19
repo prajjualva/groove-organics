@@ -17,9 +17,13 @@ function saveCart(items) {
   updateCartBadge();
 }
 
-function addToCart(product, quantity = 1) {
+// `variant` is optional — { id, label, price_paise } — for products that
+// vary by size/color. Two lines for the same product but different
+// variants are kept separate (e.g. "500ml / Green" vs "1L / Green").
+function addToCart(product, quantity = 1, variant = null) {
   const items = getCart();
-  const existing = items.find((i) => i.product_id === product.id);
+  const variantId = variant ? variant.id : null;
+  const existing = items.find((i) => i.product_id === product.id && (i.variant_id || null) === variantId);
   if (existing) {
     existing.quantity += quantity;
   } else {
@@ -27,23 +31,25 @@ function addToCart(product, quantity = 1) {
       product_id: product.id,
       slug: product.slug,
       name: product.name,
-      unit_price_paise: product.price_paise,
+      variant_id: variantId,
+      variant_label: variant ? variant.label : null,
+      unit_price_paise: variant ? variant.price_paise : product.price_paise,
       quantity,
     });
   }
   saveCart(items);
 }
 
-function removeFromCart(productId) {
-  saveCart(getCart().filter((i) => i.product_id !== productId));
+function removeFromCart(productId, variantId = null) {
+  saveCart(getCart().filter((i) => !(i.product_id === productId && (i.variant_id || null) === (variantId || null))));
 }
 
-function setCartQuantity(productId, quantity) {
+function setCartQuantity(productId, quantity, variantId = null) {
   const items = getCart();
-  const item = items.find((i) => i.product_id === productId);
+  const item = items.find((i) => i.product_id === productId && (i.variant_id || null) === (variantId || null));
   if (!item) return;
   if (quantity <= 0) {
-    saveCart(items.filter((i) => i.product_id !== productId));
+    saveCart(items.filter((i) => i !== item));
   } else {
     item.quantity = quantity;
     saveCart(items);

@@ -122,6 +122,10 @@ a { color: inherit; text-decoration: none; }
 .btn--sm { padding: 9px 18px; font-size: 0.85rem; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Product-detail size/color variant pills */
+.variant-pill { border-color: var(--sand-300); color: var(--moss-800); }
+.variant-pill[data-selected="true"] { background: var(--moss-900); border-color: var(--moss-900); color: var(--cream); }
+
 /* =====================================================================
    Nav
    ===================================================================== */
@@ -144,7 +148,7 @@ a { color: inherit; text-decoration: none; }
 }
 .nav__inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .nav__brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-size: 1.25rem; letter-spacing: 0.01em; }
-.nav__brand svg { width: 34px; height: 34px; flex-shrink: 0; }
+.nav__brand svg, .nav__brand .brand-logo { width: 34px; height: 34px; flex-shrink: 0; object-fit: contain; }
 .nav__tagline { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.7; display: block; margin-top: 2px; }
 .nav__links { display: flex; align-items: center; gap: 32px; list-style: none; margin: 0; padding: 0; font-size: 0.92rem; font-weight: 500; }
 .nav__links a { position: relative; padding: 4px 0; }
@@ -192,9 +196,28 @@ a { color: inherit; text-decoration: none; }
   position: absolute; inset: 0; width: 100%; height: 100%;
   opacity: 0.9;
 }
-.hero__scrim {
+/* Rotating hero background — admin-managed highlighted-product photos,
+   set from the dashboard's Banners tab (placement: Homepage Hero). Sits
+   above the Three.js canvas fallback, below the scrim + text. */
+.hero__slider { position: absolute; inset: 0; z-index: 1; }
+.hero__slide {
   position: absolute; inset: 0;
-  background: linear-gradient(180deg, rgba(27,36,22,0.15) 0%, rgba(27,36,22,0.55) 100%);
+  background-size: cover; background-position: center;
+  opacity: 0; transition: opacity 1.2s ease;
+}
+.hero__slide.is-active { opacity: 1; }
+.hero__slider-dots {
+  position: absolute; bottom: 28px; right: 32px; z-index: 3;
+  display: flex; gap: 10px;
+}
+.hero__slider-dot {
+  width: 9px; height: 9px; border-radius: 999px; border: 1px solid rgba(251,246,236,0.7);
+  background: transparent; cursor: pointer; padding: 0;
+}
+.hero__slider-dot.is-active { background: var(--gold-500); border-color: var(--gold-500); }
+.hero__scrim {
+  position: absolute; inset: 0; z-index: 1;
+  background: linear-gradient(180deg, rgba(27,36,22,0.25) 0%, rgba(27,36,22,0.6) 100%);
   pointer-events: none;
 }
 .hero__content {
@@ -242,6 +265,41 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 760px) {
   .feature-strip { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* =====================================================================
+   Promo / festive-offer cards (admin-managed banners, placement: homepage_promo)
+   ===================================================================== */
+.promo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+}
+.promo-card {
+  display: block;
+  position: relative;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  text-decoration: none;
+  color: var(--cream);
+  box-shadow: var(--shadow-card);
+}
+.promo-card__image {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  transition: transform 0.5s ease;
+}
+.promo-card:hover .promo-card__image { transform: scale(1.06); }
+.promo-card::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(27,36,22,0) 40%, rgba(27,36,22,0.75) 100%);
+}
+.promo-card__text {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 1;
+  padding: 20px;
+}
+.promo-card__text h4 { margin: 0 0 4px; color: var(--cream); font-size: 1.1rem; }
+.promo-card__text p { margin: 0; opacity: 0.9; font-size: 0.88rem; }
 
 /* =====================================================================
    Story section
@@ -314,6 +372,8 @@ a { color: inherit; text-decoration: none; }
   display: flex; align-items: center; justify-content: center;
 }
 .product-card__image svg { width: 46%; opacity: 0.85; }
+.product-card__image img { transition: transform 0.5s ease; }
+.product-card:hover .product-card__image img { transform: scale(1.08); }
 .product-card__image--coming-soon { background: linear-gradient(160deg, var(--sand-300), var(--sand-200)); opacity: 0.8; }
 .product-card h3 { font-size: 1.1rem; margin-bottom: 2px; }
 .product-card__desc { font-size: 0.85rem; color: var(--moss-700); margin-bottom: 12px; }
@@ -332,7 +392,7 @@ a { color: inherit; text-decoration: none; }
 }
 .footer__top { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.2fr; gap: 48px; margin-bottom: 56px; }
 .footer__brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-size: 1.2rem; margin-bottom: 12px; }
-.footer__brand svg { width: 30px; height: 30px; }
+.footer__brand svg, .footer__brand .brand-logo { width: 30px; height: 30px; object-fit: contain; }
 .footer p.muted, .footer__col p { opacity: 0.7; font-size: 0.9rem; }
 .footer__col h4 { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.72rem; color: var(--gold-500); margin-bottom: 14px; }
 .footer__col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 0.9rem; }
@@ -374,6 +434,7 @@ a { color: inherit; text-decoration: none; }
 table.data-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 table.data-table th, table.data-table td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--sand-300); }
 table.data-table th { font-family: var(--font-mono); text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.06em; color: var(--moss-700); }
+.variants-panel { background: var(--sand-100); border-radius: var(--radius-md); padding: 18px; margin: 8px 0; }
 .status-pill { font-family: var(--font-mono); font-size: 0.7rem; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; display: inline-block; }
 .status-placed { background: #eee3c8; color: #7a5c17; }
 .status-packed { background: #dbe6d2; color: #3a5a2c; }

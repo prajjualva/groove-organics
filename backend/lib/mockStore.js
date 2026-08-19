@@ -86,12 +86,35 @@ const products = [
 ];
 
 const orders = [];
-const banners = [];
+const banners = [
+  {
+    id: 'banner-seed-1',
+    title: 'Cold Pressed Coconut Oil',
+    subtitle: null,
+    image_url: '/assets/hero-coconut-oil.png',
+    link_url: '/shop',
+    placement: 'homepage_hero',
+    is_active: true,
+    sort_order: 1,
+  },
+  {
+    id: 'banner-seed-2',
+    title: 'New Batch Just Pressed',
+    subtitle: 'Fresh stock of Virgin Coconut Oil is in — while it lasts.',
+    image_url: '/assets/hero-coconut-oil.png',
+    link_url: '/shop',
+    placement: 'homepage_promo',
+    is_active: true,
+    sort_order: 1,
+  },
+];
 const newsletterSubscribers = [];
 const contactMessages = [];
 const addresses = [];
 const wishlistItems = [];
 const reviews = [];
+const productVariants = [];
+const siteContent = new Map(); // key -> value object; populated with defaults in dataStore
 
 // Demo-only login accounts — clearly not for production use.
 // Once Supabase is connected, real accounts replace these entirely.
@@ -153,6 +176,8 @@ module.exports = {
   addresses,
   wishlistItems,
   reviews,
+  productVariants,
+  siteContent,
   demoUsers,
   customerUsers,
   findUserByEmail,

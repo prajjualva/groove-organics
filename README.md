@@ -50,16 +50,31 @@ database and real payments automatically. Full walkthrough: **[docs/setup-guide.
 
 ## What's built vs. what's next
 
-Built in this pass (Phase 1 from our plan, franchise logins deferred):
-- Storefront with 3D animated hero, shop/product/cart/checkout, GST calculation, PDF invoices
-- Admin dashboard: products (add/edit/delete/stock), orders (view/update status), banners, basic sales report
+Built so far (franchise logins still deferred to a later phase):
+- Storefront: hero image slider (admin-managed, rotates through highlighted-product photos), shop with
+  category → subcategory filtering, product pages with size/color variant pickers, cart, checkout, GST
+  calculation, PDF invoices
+- Real product photo uploads from the admin dashboard (no more placeholder icons once you upload one)
+- Customer accounts: register/login, order history, saved addresses, wishlist, product reviews & ratings
+- Admin dashboard: Products (image upload, category, stock, variants), Categories (parent + subcategory
+  tree), Orders (view/update status), Banners (hero slider slides + festive-offer/promo cards + a
+  sitewide announcement strip — one flexible tool for all of it), **Homepage Content** (edit every word
+  of the hero, feature strip, story and process sections without touching code), basic sales report
 - Staff dashboard: order status updates only
-- Order tracking pipeline: Placed → Packed → Shipped → Delivered
+- Order tracking pipeline: Placed → Packed → Shipped → Delivered (a plain status field today — see
+  "Worth doing next" below for adding real carrier tracking numbers/links)
 - Razorpay integration code (works in demo mode now, switches to real charges once you add keys)
-- Supabase schema with row-level security so customers only ever see their own orders
+- Supabase schema with row-level security so customers only ever see their own orders/addresses/wishlist
+- Product-card hover animation (subtle 3D tilt + image zoom) — skipped automatically for anyone with
+  "reduce motion" turned on in their OS
 
 Worth doing before real customers use this:
 - A developer security review of the auth/payment code (recommended in our original plan)
-- Real product photography (current cards use simple line-art icons as placeholders)
-- Swapping the placeholder logo mark for your actual logo file, if you have one
+- Photograph and upload real product images for every SKU from the admin Products tab
+- Add more homepage-hero and festive-offer banners from the admin Banners tab as you get real photos —
+  right now there's one seed image repeated in both spots
+- Carrier shipment tracking (a tracking number + carrier link per order, and a "Shipped" email with that
+  link) — the order-status pipeline above is ready for this to slot into next
 - Deciding on shipping-cost rules (currently ₹0 shipping, easy to change in `backend/routes/orders.js`)
+- Product stock isn't yet auto-decremented when an order is placed — worth adding before relying on the
+  stock numbers for real inventory decisions

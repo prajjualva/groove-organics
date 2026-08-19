@@ -13,6 +13,8 @@ const miscRoutes = require('./routes/misc');
 const customerRoutes = require('./routes/customer');
 const reviewRoutes = require('./routes/reviews');
 const categoryRoutes = require('./routes/categories');
+const contentRoutes = require('./routes/content');
+const variantRoutes = require('./routes/variants');
 const { isConfigured: supabaseConfigured } = require('./lib/supabase');
 const { isConfigured: razorpayConfigured } = require('./lib/razorpay');
 
@@ -33,6 +35,8 @@ app.use('/api', miscRoutes); // /api/newsletter, /api/contact, /api/banners
 app.use('/api/customer', customerRoutes); // addresses, order history, wishlist
 app.use('/api', reviewRoutes); // /api/products/:slug/reviews, /api/reviews/:id
 app.use('/api/categories', categoryRoutes);
+app.use('/api/content', contentRoutes);
+app.use('/api', variantRoutes); // /api/products/:productId/variants, /api/variants/:id
 
 app.get('/api/status', (req, res) => {
   res.json({

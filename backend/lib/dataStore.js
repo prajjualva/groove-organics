@@ -192,6 +192,8 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
       order_id: order.id,
       product_id: i.product_id,
       product_name: i.name,
+      variant_id: i.variant_id || null,
+      variant_label: i.variant_label || null,
       unit_price_paise: i.unit_price_paise,
       quantity: i.quantity,
       line_total_paise: i.unit_price_paise * i.quantity,
@@ -224,6 +226,8 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
     order_items: items.map((i) => ({
       product_id: i.product_id,
       product_name: i.name,
+      variant_id: i.variant_id || null,
+      variant_label: i.variant_label || null,
       unit_price_paise: i.unit_price_paise,
       quantity: i.quantity,
       line_total_paise: i.unit_price_paise * i.quantity,
@@ -296,16 +300,20 @@ async function addContactMessage(msg) {
   return true;
 }
 
-async function listBanners({ includeInactive = false } = {}) {
+async function listBanners({ includeInactive = false, placement = null } = {}) {
   if (isConfigured) {
     const client = supabaseAdmin || supabase;
     let query = client.from('banners').select('*').order('sort_order', { ascending: true });
     if (!includeInactive) query = query.eq('is_active', true);
+    if (placement) query = query.eq('placement', placement);
     const { data, error } = await query;
     if (error) throw error;
     return data;
   }
-  return mock.banners.filter((b) => includeInactive || b.is_active);
+  return mock.banners
+    .filter((b) => includeInactive || b.is_active)
+    .filter((b) => !placement || b.placement === placement)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 }
 
 async function createBanner(input) {
@@ -318,6 +326,32 @@ async function createBanner(input) {
   const banner = { id: `b_${Date.now()}`, is_active: true, sort_order: mock.banners.length + 1, ...input };
   mock.banners.push(banner);
   return banner;
+}
+
+async function updateBanner(id, patch) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('banners').update(patch).eq('id', id).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const banner = mock.banners.find((b) => b.id === id);
+  if (!banner) return null;
+  Object.assign(banner, patch);
+  return banner;
+}
+
+async function deleteBanner(id) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { error } = await supabaseAdmin.from('banners').delete().eq('id', id);
+    if (error) throw error;
+    return true;
+  }
+  const idx = mock.banners.findIndex((b) => b.id === id);
+  if (idx === -1) return false;
+  mock.banners.splice(idx, 1);
+  return true;
 }
 
 // --- Order history for a specific logged-in customer ---
@@ -507,6 +541,149 @@ async function deleteReview(id) {
   return true;
 }
 
+// --- Editable site content (hero, story, feature strip, process steps) ---
+// Defaults mirror db/schema.sql's seed data so demo mode shows the same
+// copy that ships once Supabase is connected, until an admin edits it.
+const DEFAULT_CONTENT = {
+  homepage_hero: {
+    tagline: 'Goodness of Earth',
+    headline_line1: 'Pure by Nature.',
+    headline_line2: 'Trusted by You.',
+    body: 'Cold pressed coconut oil, made naturally for a healthier you and a better planet.',
+    cta_primary_label: 'Shop Now',
+    cta_primary_href: '/shop',
+    cta_secondary_label: 'Our Farms',
+    cta_secondary_href: '/about',
+  },
+  homepage_story: {
+    eyebrow: 'Our Story',
+    title_line1: 'Rooted in soil,',
+    title_line2: 'pressed by hand.',
+    body: 'We partner with named farms and press each batch the slow way — wood-ghani, stone-turned, no heat added. It takes longer. It tastes like it should.',
+    milestones: [
+      { year: '2018', text: 'Started blending botanical oils in a farmhouse kitchen.' },
+      { year: '2020', text: 'Opened a countryside pressing studio with three artisans.' },
+      { year: '2022', text: 'Earned organic & cruelty-free certification for our core range.' },
+      { year: '2024', text: 'Launched a returnable-glass refill program with 40 retail partners.' },
+    ],
+  },
+  homepage_feature_strip: {
+    items: [
+      { title: '100% Natural & Organic', body: 'Certified botanicals, no fillers' },
+      { title: 'Cold Pressed Goodness', body: 'Traditional chekku method, no heat' },
+      { title: 'No Chemicals No Additives', body: 'Nothing added, nothing hidden' },
+      { title: 'Good for You Good for Earth', body: 'Reusable glass, eco packaging' },
+    ],
+  },
+  homepage_process: {
+    eyebrow: 'From Farm to Bottle',
+    title: 'Four steps. No shortcuts.',
+    steps: [
+      { title: 'Harvest', body: 'Coconuts hand-picked at peak ripeness from partner farms, milled within 24 hours.' },
+      { title: 'Wood-Press', body: 'Chekku/ghani wheel turns slowly, keeping the oil below body temperature.' },
+      { title: 'Settle & Filter', body: 'Gravity-settled and cloth-filtered only — no centrifuge, no bleaching.' },
+      { title: 'Bottle', body: 'Hand-poured into reusable glass, labelled and sealed in small batches.' },
+    ],
+  },
+};
+
+async function listContent() {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client.from('site_content').select('*');
+    if (error) throw error;
+    const map = { ...DEFAULT_CONTENT };
+    (data || []).forEach((row) => (map[row.key] = row.value));
+    return map;
+  }
+  const map = { ...DEFAULT_CONTENT };
+  mock.siteContent.forEach((value, key) => (map[key] = value));
+  return map;
+}
+
+async function setContent(key, value) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin
+      .from('site_content')
+      .upsert({ key, value, updated_at: new Date().toISOString() })
+      .select()
+      .single();
+    if (error) throw error;
+    return data.value;
+  }
+  mock.siteContent.set(key, value);
+  return value;
+}
+
+// --- Product variants (size and/or color) ---
+async function listVariants(productId) {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client
+      .from('product_variants')
+      .select('*')
+      .eq('product_id', productId)
+      .order('sort_order', { ascending: true });
+    if (error) throw error;
+    return data;
+  }
+  return mock.productVariants
+    .filter((v) => v.product_id === productId)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+}
+
+async function createVariant(productId, input) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin
+      .from('product_variants')
+      .insert({ product_id: productId, ...input })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  }
+  const variant = {
+    id: `var_${Date.now()}`,
+    product_id: productId,
+    size: null,
+    color: null,
+    stock: 0,
+    image_url: null,
+    sort_order: mock.productVariants.length + 1,
+    ...input,
+  };
+  mock.productVariants.push(variant);
+  return variant;
+}
+
+async function updateVariant(id, patch) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('product_variants').update(patch).eq('id', id).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const variant = mock.productVariants.find((v) => v.id === id);
+  if (!variant) return null;
+  Object.assign(variant, patch);
+  return variant;
+}
+
+async function deleteVariant(id) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { error } = await supabaseAdmin.from('product_variants').delete().eq('id', id);
+    if (error) throw error;
+    return true;
+  }
+  const idx = mock.productVariants.findIndex((v) => v.id === id);
+  if (idx === -1) return false;
+  mock.productVariants.splice(idx, 1);
+  return true;
+}
+
 module.exports = {
   toPublicProduct,
   listCategories,
@@ -528,6 +705,8 @@ module.exports = {
   addContactMessage,
   listBanners,
   createBanner,
+  updateBanner,
+  deleteBanner,
   listAddresses,
   createAddress,
   updateAddress,
@@ -538,4 +717,10 @@ module.exports = {
   listReviewsForProduct,
   createReview,
   deleteReview,
+  listContent,
+  setContent,
+  listVariants,
+  createVariant,
+  updateVariant,
+  deleteVariant,
 };

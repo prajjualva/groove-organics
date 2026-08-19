@@ -106,20 +106,30 @@ create table if not exists public.order_items (
   order_id uuid not null references public.orders(id) on delete cascade,
   product_id uuid references public.products(id),
   product_name text not null,
+  variant_id uuid,                  -- not a hard FK: keep the order item even if the variant is later deleted
+  variant_label text,               -- snapshot like "500ml / Green" at time of purchase
   unit_price_paise integer not null,
   quantity integer not null,
   line_total_paise integer not null
 );
 
 -- ---------------------------------------------------------------------
--- banners (homepage / promo images managed from the admin dashboard)
+-- banners (homepage hero slides, festive-offer / promo cards, posters —
+-- one flexible table, distinguished by "placement"). Placement is plain
+-- text, not an enum, so new placements can be added from the admin UI
+-- later without a database migration. Known placements used by the
+-- storefront today:
+--   homepage_hero        -> big rotating slider at the top of the homepage
+--   homepage_promo       -> festive-offer / promo card grid further down
+--   sitewide_announcement -> thin strip banner (e.g. "Free shipping over ₹999")
 -- ---------------------------------------------------------------------
 create table if not exists public.banners (
   id uuid primary key default gen_random_uuid(),
   title text,
+  subtitle text,                    -- e.g. "Diwali Sale — 20% off, this week only"
   image_url text not null,
   link_url text,
-  placement text not null default 'homepage_top',
+  placement text not null default 'homepage_hero',
   is_active boolean not null default true,
   sort_order integer default 0,
   created_at timestamptz not null default now()
@@ -237,6 +247,26 @@ create policy "contact_admin_read" on public.contact_messages
   for select using (public.current_role() = 'admin');
 
 -- =====================================================================
+-- Editable site content (hero, story, feature strip, etc.) — lets the
+-- admin dashboard's "Content" tab change homepage copy without code edits.
+-- =====================================================================
+create table if not exists public.site_content (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.site_content enable row level security;
+
+drop policy if exists "site_content_public_read" on public.site_content;
+create policy "site_content_public_read" on public.site_content
+  for select using (true);
+
+drop policy if exists "site_content_admin_write" on public.site_content;
+create policy "site_content_admin_write" on public.site_content
+  for all using (public.current_role() = 'admin') with check (public.current_role() = 'admin');
+
+-- =====================================================================
 -- Phase 2: customer addresses, wishlist, reviews, product variants
 -- =====================================================================
 
@@ -275,15 +305,19 @@ create table if not exists public.reviews (
   created_at timestamptz not null default now()
 );
 
--- Variants (sizes) — a product with no rows here is treated as single-variant,
--- using its own price_paise/stock directly (keeps the simple case simple).
+-- Variants (size and/or color combinations) — a product with no rows here is
+-- treated as single-variant, using its own price_paise/stock directly (keeps
+-- the simple case simple). A product can vary by size only, color only, or
+-- both — the storefront shows whichever selectors have more than one value.
 create table if not exists public.product_variants (
   id uuid primary key default gen_random_uuid(),
   product_id uuid not null references public.products(id) on delete cascade,
-  label text not null,              -- e.g. "250ml", "500ml", "1L"
+  size text,                        -- e.g. "250ml", "500ml", "1L" — null if this product doesn't vary by size
+  color text,                       -- e.g. "Green", "Amber" — null if this product doesn't vary by color
   price_paise integer not null,
   stock integer not null default 0,
   sku text,
+  image_url text,                   -- optional: a different photo per color/variant
   sort_order integer default 0,
   created_at timestamptz not null default now()
 );
@@ -374,3 +408,58 @@ select
   'oils', c.id, 0, true, true, 0, 3
 from public.categories c where c.slug = 'oils'
 on conflict (slug) do nothing;
+
+-- Seed the homepage hero slider with one banner so it's not empty on first load.
+-- Add more from the admin dashboard's Banners tab (placement: homepage_hero) to build out the rotation.
+insert into public.banners (title, image_url, link_url, placement, is_active, sort_order)
+values ('Cold Pressed Coconut Oil', '/assets/hero-coconut-oil.png', '/shop', 'homepage_hero', true, 1)
+on conflict do nothing;
+
+-- Example festive-offer / promo card — edit or delete from the admin
+-- dashboard's Banners tab (placement: homepage_promo). Add more of these
+-- for seasonal sales, new launches, bundle offers, etc.
+insert into public.banners (title, subtitle, image_url, link_url, placement, is_active, sort_order)
+values ('New Batch Just Pressed', 'Fresh stock of Virgin Coconut Oil is in — while it lasts.', '/assets/hero-coconut-oil.png', '/shop', 'homepage_promo', true, 1)
+on conflict do nothing;
+
+-- Editable homepage content, seeded to match the original hardcoded copy —
+-- editing these from the admin dashboard is what actually changes the site.
+insert into public.site_content (key, value) values
+  ('homepage_hero', '{
+    "tagline": "Goodness of Earth",
+    "headline_line1": "Pure by Nature.",
+    "headline_line2": "Trusted by You.",
+    "body": "Cold pressed coconut oil, made naturally for a healthier you and a better planet.",
+    "cta_primary_label": "Shop Now", "cta_primary_href": "/shop",
+    "cta_secondary_label": "Our Farms", "cta_secondary_href": "/about"
+  }'::jsonb),
+  ('homepage_story', '{
+    "eyebrow": "Our Story",
+    "title_line1": "Rooted in soil,", "title_line2": "pressed by hand.",
+    "body": "We partner with named farms and press each batch the slow way — wood-ghani, stone-turned, no heat added. It takes longer. It tastes like it should.",
+    "milestones": [
+      {"year": "2018", "text": "Started blending botanical oils in a farmhouse kitchen."},
+      {"year": "2020", "text": "Opened a countryside pressing studio with three artisans."},
+      {"year": "2022", "text": "Earned organic & cruelty-free certification for our core range."},
+      {"year": "2024", "text": "Launched a returnable-glass refill program with 40 retail partners."}
+    ]
+  }'::jsonb),
+  ('homepage_feature_strip', '{
+    "items": [
+      {"title": "100% Natural & Organic", "body": "Certified botanicals, no fillers"},
+      {"title": "Cold Pressed Goodness", "body": "Traditional chekku method, no heat"},
+      {"title": "No Chemicals No Additives", "body": "Nothing added, nothing hidden"},
+      {"title": "Good for You Good for Earth", "body": "Reusable glass, eco packaging"}
+    ]
+  }'::jsonb),
+  ('homepage_process', '{
+    "eyebrow": "From Farm to Bottle",
+    "title": "Four steps. No shortcuts.",
+    "steps": [
+      {"title": "Harvest", "body": "Coconuts hand-picked at peak ripeness from partner farms, milled within 24 hours."},
+      {"title": "Wood-Press", "body": "Chekku/ghani wheel turns slowly, keeping the oil below body temperature."},
+      {"title": "Settle & Filter", "body": "Gravity-settled and cloth-filtered only — no centrifuge, no bleaching."},
+      {"title": "Bottle", "body": "Hand-poured into reusable glass, labelled and sealed in small batches."}
+    ]
+  }'::jsonb)
+on conflict (key) do nothing;

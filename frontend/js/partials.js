@@ -3,11 +3,10 @@
 //   <div id="nav-root"></div>  ... <div id="footer-root"></div>
 // and this script, then calls renderNav('shop') / renderFooter().
 
-const LOGO_SVG = `
-<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-  <circle cx="24" cy="24" r="22" stroke="#C9A227" stroke-width="1.4"/>
-  <path d="M28.5 15c-6 0-10.8 4.6-10.8 10.4 0 5.1 3.7 8.6 8.4 8.6 2 0 3.7-.6 4.9-1.7v1.2c0 3.4-2.2 5.3-5.6 5.3-2 0-3.7-.6-5-1.6l-1.3 2.6c1.7 1.3 4 2 6.5 2 5.2 0 8.6-3 8.6-8V15.8h-2.9l-.2 1.7c-1-1.3-2.7-2.5-5-2.5z" fill="#C9A227"/>
-</svg>`;
+// Real uploaded brand logo — lives at frontend/assets/logo.png. Swap that
+// file from the Desktop project folder any time to update the logo
+// everywhere on the site (nav + footer both use this one constant).
+const LOGO_SVG = `<img src="/assets/logo.png" alt="Groove Organics" class="brand-logo" />`;
 
 function renderNav(active = '') {
   const root = document.getElementById('nav-root');

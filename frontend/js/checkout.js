@@ -8,7 +8,7 @@ function renderCheckoutSummary() {
     <h3 class="mt-0">Order Summary</h3>
     ${items
       .map(
-        (i) => `<div class="flex-between" style="font-size:0.9rem;"><span>${i.name} × ${i.quantity}</span><span class="mono">${formatRupees(i.unit_price_paise * i.quantity)}</span></div>`
+        (i) => `<div class="flex-between" style="font-size:0.9rem;"><span>${i.name}${i.variant_label ? ` (${i.variant_label})` : ''} × ${i.quantity}</span><span class="mono">${formatRupees(i.unit_price_paise * i.quantity)}</span></div>`
       )
       .join('')}
     <hr style="border:none;border-top:1px solid var(--sand-300);margin:16px 0;" />
@@ -72,6 +72,8 @@ async function handleCheckoutSubmit(e) {
         items: items.map((i) => ({
           product_id: i.product_id,
           name: i.name,
+          variant_id: i.variant_id || null,
+          variant_label: i.variant_label || null,
           unit_price_paise: i.unit_price_paise,
           quantity: i.quantity,
         })),

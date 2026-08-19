@@ -14,43 +14,62 @@
 <div id="nav-root"></div>
 
 <header class="hero">
+  <div id="hero-slider" class="hero__slider" aria-hidden="true">
+    <!-- slides injected by home-content.js from /api/banners?placement=homepage_hero -->
+  </div>
   <canvas id="hero-canvas" class="hero__canvas" aria-hidden="true"></canvas>
   <div class="hero__scrim"></div>
   <div class="hero__content">
-    <span class="hero__tagline">Goodness of Earth</span>
-    <h1>Oil, pressed<br />in slow motion.</h1>
-    <p class="hero__lede">Cold-pressed and wood-pressed the traditional chekku way — no heat, no shortcuts, no fillers. Just what the farm gave us.</p>
-    <div class="hero__ctas">
+    <span class="hero__tagline" id="hero-tagline">Goodness of Earth</span>
+    <h1 id="hero-headline">Oil, pressed<br />in slow motion.</h1>
+    <p class="hero__lede" id="hero-body">Cold-pressed and wood-pressed the traditional chekku way — no heat, no shortcuts, no fillers. Just what the farm gave us.</p>
+    <div class="hero__ctas" id="hero-ctas">
       <a href="/shop" class="btn btn--primary">Shop Now</a>
       <a href="/about" class="btn btn--outline">Our Farms</a>
     </div>
   </div>
+  <div class="hero__slider-dots" id="hero-slider-dots"></div>
   <div class="hero__scroll-cue"><span>Scroll</span><span></span></div>
 </header>
 
 <section class="section section--tight">
   <div class="container">
-    <div class="feature-strip reveal">
+    <div class="feature-strip reveal" id="feature-strip">
+      <!-- replaced by home-content.js from /api/content once it loads; this is just the no-JS/offline fallback -->
       <div class="feature-strip__item">
         <svg class="feature-strip__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 2C8 6 5 9.5 5 14a7 7 0 0 0 14 0c0-4.5-3-8-7-12z"/></svg>
-        <h4>Natural &amp; Organic</h4>
+        <h4>100% Natural &amp; Organic</h4>
         <p>Certified botanicals, no fillers</p>
       </div>
       <div class="feature-strip__item">
         <svg class="feature-strip__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
-        <h4>Cold Pressed</h4>
+        <h4>Cold Pressed Goodness</h4>
         <p>Traditional chekku method, no heat</p>
       </div>
       <div class="feature-strip__item">
         <svg class="feature-strip__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 12l5 5L20 6"/></svg>
-        <h4>No Harmful Chemicals</h4>
+        <h4>No Chemicals No Additives</h4>
         <p>Nothing added, nothing hidden</p>
       </div>
       <div class="feature-strip__item">
         <svg class="feature-strip__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 21c4-8 8-11 18-13-1 9-6 13-18 13z"/></svg>
-        <h4>Good for Earth</h4>
+        <h4>Good for You Good for Earth</h4>
         <p>Reusable glass, eco packaging</p>
       </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="promo-section" style="display:none;">
+  <div class="container">
+    <div class="flex-between reveal" style="margin-bottom:32px;">
+      <div>
+        <span class="eyebrow">Right Now</span>
+        <h2 class="mt-0">Offers &amp; Highlights</h2>
+      </div>
+    </div>
+    <div class="promo-grid reveal" id="promo-grid">
+      <!-- promo cards injected by home-content.js from /api/banners?placement=homepage_promo -->
     </div>
   </div>
 </section>
@@ -58,10 +77,10 @@
 <section class="section section--dark">
   <div class="container story">
     <div class="story__text reveal">
-      <span class="eyebrow">Our Story</span>
-      <h2>Rooted in soil,<br />pressed by hand.</h2>
-      <p>We partner with named farms and press each batch the slow way — wood-ghani, stone-turned, no heat added. It takes longer. It tastes like it should.</p>
-      <div class="story__milestones">
+      <span class="eyebrow" id="story-eyebrow">Our Story</span>
+      <h2 id="story-title">Rooted in soil,<br />pressed by hand.</h2>
+      <p id="story-body">We partner with named farms and press each batch the slow way — wood-ghani, stone-turned, no heat added. It takes longer. It tastes like it should.</p>
+      <div class="story__milestones" id="story-milestones">
         <div class="story__milestone"><span class="mono">2018</span><span>Started blending botanical oils in a farmhouse kitchen.</span></div>
         <div class="story__milestone"><span class="mono">2020</span><span>Opened a countryside pressing studio with three artisans.</span></div>
         <div class="story__milestone"><span class="mono">2022</span><span>Earned organic &amp; cruelty-free certification for our core range.</span></div>
@@ -83,9 +102,9 @@
 
 <section class="section section--dark process">
   <div class="container">
-    <span class="eyebrow reveal">From Farm to Bottle</span>
-    <h2 class="reveal" style="max-width:600px;">Four steps. No shortcuts.</h2>
-    <div style="margin-top:40px;">
+    <span class="eyebrow reveal" id="process-eyebrow">From Farm to Bottle</span>
+    <h2 class="reveal" id="process-title" style="max-width:600px;">Four steps. No shortcuts.</h2>
+    <div style="margin-top:40px;" id="process-steps">
       <div class="process__row reveal"><span class="mono">01</span><h4>Harvest</h4><p>Coconuts hand-picked at peak ripeness from partner farms, milled within 24 hours.</p></div>
       <div class="process__row reveal"><span class="mono">02</span><h4>Wood-Press</h4><p>Chekku/ghani wheel turns slowly, keeping the oil below body temperature.</p></div>
       <div class="process__row reveal"><span class="mono">03</span><h4>Settle &amp; Filter</h4><p>Gravity-settled and cloth-filtered only — no centrifuge, no bleaching.</p></div>
@@ -130,6 +149,7 @@
 <script src="/js/partials.js"></script>
 <script src="/js/products-render.js"></script>
 <script src="/js/hero3d.js" defer></script>
+<script src="/js/home-content.js"></script>
 <script src="/js/main.js"></script>
 </body>
 </html>

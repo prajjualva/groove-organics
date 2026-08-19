@@ -13,6 +13,11 @@ async function loadProduct() {
       ? `<del>${formatRupees(product.compare_at_price_paise)}</del> ${formatRupees(product.price_paise)}`
       : formatRupees(product.price_paise);
 
+    const variants = product.variants || [];
+    const sizes = [...new Set(variants.map((v) => v.size).filter(Boolean))];
+    const colors = [...new Set(variants.map((v) => v.color).filter(Boolean))];
+    const hasVariants = variants.length > 0;
+
     wrap.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:start;">
         <div class="product-card__image" style="aspect-ratio:1/1;">
@@ -27,11 +32,35 @@ async function loadProduct() {
           <h1>${product.name}</h1>
           ${product.rating ? `<div class="product-card__rating" style="margin-bottom:16px;">★ ${product.rating} (${product.review_count} reviews)</div>` : ''}
           <p style="font-size:1.1rem;color:var(--moss-700);">${product.description || product.short_description || ''}</p>
-          <div class="mono" style="font-size:1.6rem;margin:20px 0;">${priceHtml}</div>
+          <div class="mono" style="font-size:1.6rem;margin:20px 0;" id="variant-price">${priceHtml}</div>
           ${
             product.is_coming_soon
               ? `<button class="btn btn--outline" id="notify-btn">Notify Me When Available</button>`
               : `
+              ${
+                hasVariants
+                  ? `
+                  <div id="variant-selectors" style="margin-bottom:20px;">
+                    ${
+                      sizes.length
+                        ? `<div class="form-field"><label>Size</label>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                          ${sizes.map((s, i) => `<button type="button" class="btn btn--outline btn--sm variant-pill" data-size="${s}" data-selected="${i === 0}">${s}</button>`).join('')}
+                        </div></div>`
+                        : ''
+                    }
+                    ${
+                      colors.length
+                        ? `<div class="form-field"><label>Color</label>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                          ${colors.map((c, i) => `<button type="button" class="btn btn--outline btn--sm variant-pill" data-color="${c}" data-selected="${i === 0}">${c}</button>`).join('')}
+                        </div></div>`
+                        : ''
+                    }
+                    <p class="form-error" id="variant-error" style="display:none;">That combination isn't available.</p>
+                  </div>`
+                  : ''
+              }
               <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
                 <label for="qty" style="font-weight:600;font-size:0.9rem;">Qty</label>
                 <input id="qty" type="number" min="1" value="1" style="width:70px;padding:10px;border-radius:8px;border:1px solid var(--sand-300);" />
@@ -41,7 +70,7 @@ async function loadProduct() {
               <button class="btn btn--outline" id="wishlist-btn" style="margin-left:10px;">♡ Save</button>
               `
           }
-          <div class="banner-note" style="margin-top:32px;">
+          <div class="banner-note" style="margin-top:32px;" id="stock-note">
             ${product.stock > 0 ? `${product.stock} in stock.` : ''} Cold-pressed / wood-pressed (chekku method). GST calculated at checkout.
           </div>
         </div>
@@ -60,11 +89,62 @@ async function loadProduct() {
     loadReviews(product);
     renderReviewForm(product);
 
+    // Resolves the currently-selected size/color pills to a matching variant
+    // row (or null if that combination doesn't exist / isn't stocked).
+    function getSelectedVariant() {
+      if (!hasVariants) return null;
+      const selectedSize = sizes.length ? document.querySelector('[data-size][data-selected="true"]')?.getAttribute('data-size') : null;
+      const selectedColor = colors.length ? document.querySelector('[data-color][data-selected="true"]')?.getAttribute('data-color') : null;
+      return (
+        variants.find((v) => (sizes.length ? v.size === selectedSize : true) && (colors.length ? v.color === selectedColor : true)) || null
+      );
+    }
+
+    function variantLabel(v) {
+      return [v.size, v.color].filter(Boolean).join(' / ');
+    }
+
+    function refreshVariantUI() {
+      const priceEl = document.getElementById('variant-price');
+      const stockNote = document.getElementById('stock-note');
+      const errorEl = document.getElementById('variant-error');
+      const addBtn = document.getElementById('add-btn');
+      const variant = getSelectedVariant();
+
+      if (!hasVariants) return;
+
+      if (!variant) {
+        if (errorEl) errorEl.style.display = 'block';
+        if (addBtn) addBtn.disabled = true;
+        return;
+      }
+      if (errorEl) errorEl.style.display = 'none';
+      if (priceEl) priceEl.textContent = formatRupees(variant.price_paise);
+      if (stockNote) {
+        stockNote.innerHTML = `${variant.stock > 0 ? `${variant.stock} in stock.` : '<strong>Out of stock.</strong>'} Cold-pressed / wood-pressed (chekku method). GST calculated at checkout.`;
+      }
+      if (addBtn) addBtn.disabled = variant.stock <= 0;
+    }
+
+    document.querySelectorAll('.variant-pill').forEach((pill) => {
+      pill.addEventListener('click', () => {
+        const isSize = pill.hasAttribute('data-size');
+        document
+          .querySelectorAll(isSize ? '[data-size]' : '[data-color]')
+          .forEach((p) => p.setAttribute('data-selected', 'false'));
+        pill.setAttribute('data-selected', 'true');
+        refreshVariantUI();
+      });
+    });
+    refreshVariantUI();
+
     const addBtn = document.getElementById('add-btn');
     if (addBtn) {
       addBtn.addEventListener('click', () => {
         const qty = Math.max(1, parseInt(document.getElementById('qty').value, 10) || 1);
-        addToCart(product, qty);
+        const variant = getSelectedVariant();
+        if (hasVariants && !variant) return;
+        addToCart(product, qty, variant ? { id: variant.id, label: variantLabel(variant), price_paise: variant.price_paise } : null);
         addBtn.textContent = 'Added to Cart ✓';
         setTimeout(() => (addBtn.textContent = 'Add to Cart'), 1400);
       });
