@@ -95,8 +95,6 @@ function renderFooter() {
             <ul>
               <li><a href="/about">Our Story</a></li>
               <li><a href="/contact">Contact</a></li>
-              <li><a href="/admin">Admin</a></li>
-              <li><a href="/staff">Staff</a></li>
             </ul>
           </div>
           <div class="footer__col">
