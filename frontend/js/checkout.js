@@ -62,9 +62,11 @@ async function handleCheckoutSubmit(e) {
   payBtn.textContent = 'Placing order…';
 
   try {
+    // auth left at its default (true): if the shopper is logged in, their
+    // token is attached automatically so the order links to their account;
+    // guest checkout still works fine with no token present.
     const { order } = await api('/api/orders', {
       method: 'POST',
-      auth: false,
       body: {
         customer,
         items: items.map((i) => ({

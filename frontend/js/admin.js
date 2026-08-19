@@ -13,10 +13,46 @@ function requireAdminOrRedirect() {
   return user;
 }
 
+// Renders <option> tags for a category <select>, indenting subcategories
+// under their parent so the hierarchy reads clearly in a flat dropdown.
+function categoryOptionsHtml(categories, selectedId) {
+  const parents = categories.filter((c) => !c.parent_id);
+  return parents
+    .map((parent) => {
+      const children = categories.filter((c) => c.parent_id === parent.id);
+      const parentOption = `<option value="${parent.id}" ${parent.id === selectedId ? 'selected' : ''}>${parent.name}</option>`;
+      const childOptions = children
+        .map((c) => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>&nbsp;&nbsp;— ${c.name}</option>`)
+        .join('');
+      return parentOption + childOptions;
+    })
+    .join('');
+}
+
+function categoryLabel(categories, categoryId) {
+  const cat = categories.find((c) => c.id === categoryId);
+  if (!cat) return '—';
+  if (!cat.parent_id) return cat.name;
+  const parent = categories.find((c) => c.id === cat.parent_id);
+  return parent ? `${parent.name} / ${cat.name}` : cat.name;
+}
+
+// Reads a <input type="file"> as a base64 data URL — good enough for demo
+// mode; once Supabase is connected this is the natural place to swap in a
+// real Storage upload (same call site, different implementation).
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 async function renderProductsTab() {
   const wrap = document.getElementById('tab-content');
   wrap.innerHTML = '<p>Loading products…</p>';
-  const { products } = await api('/api/products');
+  const [{ products }, { categories }] = await Promise.all([api('/api/products'), api('/api/categories', { auth: false })]);
 
   wrap.innerHTML = `
     <div class="card" style="margin-bottom:24px;">
@@ -28,17 +64,21 @@ async function renderProductsTab() {
         </div>
         <div class="form-row">
           <div class="form-field"><label for="p-price">Price (₹)</label><input id="p-price" type="number" min="0" step="0.01" required /></div>
-          <div class="form-field"><label for="p-category">Category</label><input id="p-category" value="oils" required /></div>
+          <div class="form-field">
+            <label for="p-category">Category</label>
+            <select id="p-category" required>${categoryOptionsHtml(categories, null)}</select>
+          </div>
         </div>
         <div class="form-field"><label for="p-short">Short description</label><input id="p-short" /></div>
         <div class="form-field"><label for="p-desc">Full description</label><textarea id="p-desc" rows="3"></textarea></div>
+        <div class="form-field"><label for="p-image">Product image</label><input id="p-image" type="file" accept="image/*" /></div>
         <button class="btn btn--primary" type="submit">Add Product</button>
         <p class="form-error" id="add-product-error" style="display:none;"></p>
       </form>
     </div>
     <div class="card">
       <table class="data-table">
-        <thead><tr><th>Name</th><th>Price</th><th>Category</th><th>Stock</th><th>Active</th><th></th></tr></thead>
+        <thead><tr><th>Image</th><th>Name</th><th>Price</th><th>Category</th><th>Stock</th><th>Active</th><th></th></tr></thead>
         <tbody id="products-tbody"></tbody>
       </table>
     </div>
@@ -49,9 +89,17 @@ async function renderProductsTab() {
     .map(
       (p) => `
       <tr data-id="${p.id}">
+        <td>
+          <div style="width:48px;height:48px;border-radius:8px;overflow:hidden;background:var(--sand-200);display:flex;align-items:center;justify-content:center;">
+            ${p.image_url ? `<img src="${p.image_url}" alt="" style="width:100%;height:100%;object-fit:cover;" />` : '<span style="font-size:0.65rem;color:var(--moss-700);">No image</span>'}
+          </div>
+          <input type="file" accept="image/*" data-image="${p.id}" style="margin-top:6px;font-size:0.7rem;width:110px;" />
+        </td>
         <td>${p.name}</td>
         <td class="mono">${formatRupees(p.price_paise)}</td>
-        <td>${p.category}</td>
+        <td>
+          <select data-category="${p.id}">${categoryOptionsHtml(categories, p.category_id)}</select>
+        </td>
         <td><input type="number" min="0" value="${p.stock}" data-stock="${p.id}" style="width:70px;padding:6px;border-radius:6px;border:1px solid var(--sand-300);" /></td>
         <td><input type="checkbox" data-active="${p.id}" ${p.is_active ? 'checked' : ''} /></td>
         <td><button class="btn btn--outline btn--sm" data-delete="${p.id}">Delete</button></td>
@@ -75,6 +123,23 @@ async function renderProductsTab() {
       });
     });
   });
+  tbody.querySelectorAll('[data-category]').forEach((select) => {
+    select.addEventListener('change', async () => {
+      await api(`/api/products/${select.getAttribute('data-category')}`, {
+        method: 'PATCH',
+        body: { category_id: select.value },
+      });
+    });
+  });
+  tbody.querySelectorAll('[data-image]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const file = input.files[0];
+      if (!file) return;
+      const image_url = await readFileAsDataUrl(file);
+      await api(`/api/products/${input.getAttribute('data-image')}`, { method: 'PATCH', body: { image_url } });
+      renderProductsTab();
+    });
+  });
   tbody.querySelectorAll('[data-delete]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (!confirm('Delete this product?')) return;
@@ -88,18 +153,96 @@ async function renderProductsTab() {
     const errorEl = document.getElementById('add-product-error');
     errorEl.style.display = 'none';
     try {
+      const imageFile = document.getElementById('p-image').files[0];
+      const image_url = imageFile ? await readFileAsDataUrl(imageFile) : null;
+      const categoryId = document.getElementById('p-category').value;
+      const category = categoryLabel(categories, categoryId).split(' / ')[0].toLowerCase();
       await api('/api/products', {
         method: 'POST',
         body: {
           name: document.getElementById('p-name').value,
           slug: document.getElementById('p-slug').value,
           price_paise: Math.round(parseFloat(document.getElementById('p-price').value) * 100),
-          category: document.getElementById('p-category').value,
+          category_id: categoryId,
+          category,
           short_description: document.getElementById('p-short').value,
           description: document.getElementById('p-desc').value,
+          image_url,
         },
       });
       renderProductsTab();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.style.display = 'block';
+    }
+  });
+}
+
+async function renderCategoriesTab() {
+  const wrap = document.getElementById('tab-content');
+  wrap.innerHTML = '<p>Loading categories…</p>';
+  const { categories } = await api('/api/categories', { auth: false });
+
+  wrap.innerHTML = `
+    <div class="card" style="margin-bottom:24px;">
+      <h3 class="mt-0">Add a category or subcategory</h3>
+      <p style="font-size:0.85rem;color:var(--moss-700);">Leave "Parent" as "None" to create a top-level category (e.g. "Spices"). Pick a parent to create a subcategory under it (e.g. "Turmeric" under "Spices").</p>
+      <div class="form-row">
+        <div class="form-field"><label for="c-name">Name</label><input id="c-name" placeholder="e.g. Turmeric" required /></div>
+        <div class="form-field"><label for="c-slug">URL slug</label><input id="c-slug" placeholder="e.g. turmeric" required /></div>
+      </div>
+      <div class="form-field">
+        <label for="c-parent">Parent category</label>
+        <select id="c-parent">
+          <option value="">None (top-level category)</option>
+          ${categories.filter((c) => !c.parent_id).map((c) => `<option value="${c.id}">${c.name}</option>`).join('')}
+        </select>
+      </div>
+      <button class="btn btn--primary" id="add-category-btn">Add Category</button>
+      <p class="form-error" id="add-category-error" style="display:none;"></p>
+    </div>
+    <div class="card">
+      <table class="data-table">
+        <thead><tr><th>Category</th><th>Slug</th><th></th></tr></thead>
+        <tbody id="categories-tbody"></tbody>
+      </table>
+    </div>
+  `;
+
+  const tbody = document.getElementById('categories-tbody');
+  const parents = categories.filter((c) => !c.parent_id);
+  const rows = [];
+  parents.forEach((parent) => {
+    rows.push({ ...parent, displayName: parent.name });
+    categories
+      .filter((c) => c.parent_id === parent.id)
+      .forEach((child) => rows.push({ ...child, displayName: `— ${child.name}` }));
+  });
+  tbody.innerHTML = rows
+    .map((c) => `<tr><td>${c.displayName}</td><td class="mono">${c.slug}</td><td><button class="btn btn--outline btn--sm" data-delete-category="${c.id}">Delete</button></td></tr>`)
+    .join('');
+
+  tbody.querySelectorAll('[data-delete-category]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this category? Products in it will keep their old category tag but lose the link.')) return;
+      await api(`/api/categories/${btn.getAttribute('data-delete-category')}`, { method: 'DELETE' });
+      renderCategoriesTab();
+    });
+  });
+
+  document.getElementById('add-category-btn').addEventListener('click', async () => {
+    const errorEl = document.getElementById('add-category-error');
+    errorEl.style.display = 'none';
+    try {
+      await api('/api/categories', {
+        method: 'POST',
+        body: {
+          name: document.getElementById('c-name').value,
+          slug: document.getElementById('c-slug').value,
+          parent_id: document.getElementById('c-parent').value || null,
+        },
+      });
+      renderCategoriesTab();
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.style.display = 'block';
@@ -241,6 +384,7 @@ async function renderReportsTab() {
 
 const TAB_RENDERERS = {
   products: renderProductsTab,
+  categories: renderCategoriesTab,
   orders: renderOrdersTab,
   banners: renderBannersTab,
   reports: renderReportsTab,

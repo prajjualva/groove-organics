@@ -15,7 +15,7 @@ router.post('/', async (req, res, next) => {
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'At least one line item is required.' });
     }
-    const order = await store.createOrder({ customer, items, gstRatePercent: GST_RATE });
+    const order = await store.createOrder({ customer, items, gstRatePercent: GST_RATE, userId: req.user ? req.user.userId : null });
     res.status(201).json({ order });
   } catch (err) {
     next(err);

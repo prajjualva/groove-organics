@@ -7,6 +7,14 @@ function productImageSvg(product) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="#FBF6EC" stroke-width="1"><path d="M12 2C8 6 5 9.5 5 14a7 7 0 0 0 14 0c0-4.5-3-8-7-12z"/></svg>`;
 }
 
+// Real photo if the admin uploaded one, otherwise the stylized placeholder icon.
+function productImageInner(product) {
+  if (product.image_url) {
+    return `<img src="${product.image_url}" alt="${product.name}" style="width:100%;height:100%;object-fit:cover;" />`;
+  }
+  return productImageSvg(product);
+}
+
 function productCardHtml(product) {
   const badge = product.is_bestseller
     ? '<span class="product-card__badge">Bestseller</span>'
@@ -18,7 +26,7 @@ function productCardHtml(product) {
     return `
       <div class="product-card">
         ${badge}
-        <div class="product-card__image product-card__image--coming-soon">${productImageSvg(product)}</div>
+        <div class="product-card__image product-card__image--coming-soon">${productImageInner(product)}</div>
         <h3>${product.name}</h3>
         <p class="product-card__desc">${product.short_description || ''}</p>
         <div class="product-card__footer">
@@ -35,8 +43,11 @@ function productCardHtml(product) {
   return `
     <div class="product-card">
       ${badge}
+      <button class="product-card__wishlist" data-wishlist="${product.id}" aria-label="Save to wishlist" style="position:absolute;top:16px;right:16px;z-index:2;background:rgba(251,246,236,0.9);border:none;border-radius:999px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#33422B" stroke-width="1.8"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
+      </button>
       <a href="/product?slug=${encodeURIComponent(product.slug)}" style="text-decoration:none;color:inherit;">
-        <div class="product-card__image">${productImageSvg(product)}</div>
+        <div class="product-card__image">${productImageInner(product)}</div>
         <h3>${product.name}</h3>
         <p class="product-card__desc">${product.short_description || ''}</p>
         ${product.rating ? `<div class="product-card__rating">★ ${product.rating} (${product.review_count} reviews)</div>` : ''}
@@ -57,6 +68,22 @@ function wireProductCardButtons(container, products) {
         addToCart(product, 1);
         btn.textContent = 'Added ✓';
         setTimeout(() => (btn.textContent = 'Add'), 1200);
+      }
+    });
+  });
+  container.querySelectorAll('[data-wishlist]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (!getAuthToken()) {
+        window.location.href = `/account?redirect=${encodeURIComponent(window.location.pathname)}`;
+        return;
+      }
+      try {
+        await api('/api/customer/wishlist', { method: 'POST', body: { product_id: btn.getAttribute('data-wishlist') } });
+        btn.innerHTML = '♥';
+        btn.style.color = '#B5551D';
+      } catch (err) {
+        alert(err.message);
       }
     });
   });

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign In — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body style="background:var(--moss-900);">
+
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;">
+  <div class="card" style="max-width:420px;width:100%;">
+    <div class="dashboard-nav" id="auth-tabs">
+      <button class="active" data-mode="login">Sign In</button>
+      <button data-mode="register">Create Account</button>
+    </div>
+
+    <form id="login-form">
+      <div class="form-field"><label for="li-email">Email</label><input id="li-email" type="email" required /></div>
+      <div class="form-field"><label for="li-password">Password</label><input id="li-password" type="password" required /></div>
+      <button class="btn btn--dark" type="submit" style="width:100%;">Sign In</button>
+      <p class="form-error" id="login-error" style="display:none;"></p>
+    </form>
+
+    <form id="register-form" style="display:none;">
+      <div class="form-field"><label for="re-name">Full name</label><input id="re-name" required /></div>
+      <div class="form-field"><label for="re-email">Email</label><input id="re-email" type="email" required /></div>
+      <div class="form-field"><label for="re-password">Password</label><input id="re-password" type="password" minlength="6" required /></div>
+      <button class="btn btn--dark" type="submit" style="width:100%;">Create Account</button>
+      <p class="form-error" id="register-error" style="display:none;"></p>
+    </form>
+
+    <p style="margin-top:16px;font-size:0.85rem;"><a href="/" style="text-decoration:underline;">Back to site</a></p>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+const tabs = document.getElementById('auth-tabs');
+const loginForm = document.getElementById('login-form');
+const registerForm = document.getElementById('register-form');
+tabs.querySelectorAll('button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    tabs.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    const mode = btn.getAttribute('data-mode');
+    loginForm.style.display = mode === 'login' ? 'block' : 'none';
+    registerForm.style.display = mode === 'register' ? 'block' : 'none';
+  });
+});
+
+async function afterAuth(token, user) {
+  setAuthSession(token, user);
+  const redirectTo = new URLSearchParams(window.location.search).get('redirect') || '/account/dashboard';
+  window.location.href = redirectTo;
+}
+
+loginForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('login-error');
+  errorEl.style.display = 'none';
+  try {
+    const { token, user } = await api('/api/auth/login', {
+      method: 'POST',
+      auth: false,
+      body: { email: document.getElementById('li-email').value, password: document.getElementById('li-password').value },
+    });
+    afterAuth(token, user);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+  }
+});
+
+registerForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('register-error');
+  errorEl.style.display = 'none';
+  try {
+    const result = await api('/api/auth/register', {
+      method: 'POST',
+      auth: false,
+      body: {
+        full_name: document.getElementById('re-name').value,
+        email: document.getElementById('re-email').value,
+        password: document.getElementById('re-password').value,
+      },
+    });
+    if (result.pendingEmailConfirmation) {
+      registerForm.innerHTML = `<p class="form-success">${result.message}</p>`;
+      return;
+    }
+    afterAuth(result.token, result.user);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+  }
+});
+</script>
+</body>
+</html>

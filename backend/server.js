@@ -10,6 +10,9 @@ const orderRoutes = require('./routes/orders');
 const paymentRoutes = require('./routes/payments');
 const invoiceRoutes = require('./routes/invoice');
 const miscRoutes = require('./routes/misc');
+const customerRoutes = require('./routes/customer');
+const reviewRoutes = require('./routes/reviews');
+const categoryRoutes = require('./routes/categories');
 const { isConfigured: supabaseConfigured } = require('./lib/supabase');
 const { isConfigured: razorpayConfigured } = require('./lib/razorpay');
 
@@ -27,6 +30,9 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/orders', invoiceRoutes); // adds GET /api/orders/:id/invoice
 app.use('/api/payments', paymentRoutes);
 app.use('/api', miscRoutes); // /api/newsletter, /api/contact, /api/banners
+app.use('/api/customer', customerRoutes); // addresses, order history, wishlist
+app.use('/api', reviewRoutes); // /api/products/:slug/reviews, /api/reviews/:id
+app.use('/api/categories', categoryRoutes);
 
 app.get('/api/status', (req, res) => {
   res.json({
@@ -60,6 +66,9 @@ const pageRoutes = {
   '/admin/dashboard': 'admin/dashboard.html',
   '/staff': 'staff/index.html',
   '/staff/dashboard': 'staff/dashboard.html',
+  '/account': 'account/index.html',
+  '/account/dashboard': 'account/dashboard.html',
+  '/wishlist': 'account/dashboard.html',
 };
 Object.entries(pageRoutes).forEach(([route, file]) => {
   app.get(route, (req, res) => res.sendFile(path.join(frontendDir, file)));
