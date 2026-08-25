@@ -15,11 +15,23 @@ router.get('/products/:slug/reviews', async (req, res, next) => {
   }
 });
 
-// POST /api/products/:slug/reviews — any logged-in customer
+// POST /api/products/:slug/reviews — logged-in customers who have actually
+// bought this product (a paid or delivered order containing it) only.
 router.post('/products/:slug/reviews', requireAuth, async (req, res, next) => {
   try {
     const product = await store.getProductBySlug(req.params.slug);
     if (!product) return res.status(404).json({ error: 'Product not found.' });
+
+    const myOrders = await store.listOrdersForUser(req.user.userId);
+    const hasPurchased = myOrders.some(
+      (o) =>
+        (o.payment_status === 'paid' || o.status === 'delivered') &&
+        (o.order_items || []).some((item) => item.product_id === product.id)
+    );
+    if (!hasPurchased) {
+      return res.status(403).json({ error: 'Only customers who have purchased this product can review it.' });
+    }
+
     const { rating, title, body } = req.body || {};
     const numericRating = Number(rating);
     if (!numericRating || numericRating < 1 || numericRating > 5) {

@@ -30,8 +30,8 @@ const products = [
     category: 'oils',
     category_id: 'cat-coconut-oil',
     price_paise: 42500,
-    compare_at_price_paise: null,
-    image_url: null,
+    compare_at_price_paise: 47500, // demo: shows a "Sale Live" struck-through price out of the box
+    image_url: '/assets/hero-pure-by-nature-dark.png',
     is_active: true,
     is_bestseller: true,
     is_new: false,
@@ -41,7 +41,15 @@ const products = [
     review_count: 412,
     sort_order: 1,
     gst_rate_percent: null, // null = use the store-wide default rate (GST_RATE_PERCENT env var)
-    shipping_charge_paise: 0, // 0 = free shipping for this item
+    shipping_charge_paise: 0, // 0 = manual override off — weight/dimensions below drive shipping instead
+    weight_grams: 350, // 250ml glass bottle + packaging, approx.
+    length_cm: 7,
+    width_cm: 7,
+    height_cm: 18,
+    promo_tags: ['Sale Live', 'Best Seller'],
+    hsn_code: '15131900',
+    seo_title: null,
+    seo_meta_description: null,
   },
   {
     id: 'p2',
@@ -54,7 +62,7 @@ const products = [
     category_id: 'cat-coconut-oil',
     price_paise: 65000,
     compare_at_price_paise: null,
-    image_url: null,
+    image_url: '/assets/hero-pure-by-nature-light.png',
     is_active: true,
     is_bestseller: false,
     is_new: true,
@@ -65,6 +73,14 @@ const products = [
     sort_order: 2,
     gst_rate_percent: null,
     shipping_charge_paise: 0,
+    weight_grams: 550, // 500ml glass bottle + packaging, approx.
+    length_cm: 8,
+    width_cm: 8,
+    height_cm: 22,
+    promo_tags: ['New Deal'],
+    hsn_code: '15131900',
+    seo_title: null,
+    seo_meta_description: null,
   },
   {
     id: 'p3',
@@ -88,30 +104,70 @@ const products = [
     sort_order: 3,
     gst_rate_percent: null,
     shipping_charge_paise: 0,
+    weight_grams: null,
+    length_cm: null,
+    width_cm: null,
+    height_cm: null,
+    promo_tags: [],
+    hsn_code: null,
+    seo_title: null,
+    seo_meta_description: null,
   },
 ];
+
+// Preset badge options an admin can attach to a product (multi-select) — used
+// on product-card badges and to group products onto the /deals page.
+const PROMO_TAG_OPTIONS = ['Sale Live', 'New Deal', 'Best Seller', 'Festive Offer', 'Limited Stock', 'Bundle Deal'];
 
 const orders = [];
 const banners = [
   {
     id: 'banner-seed-1',
-    title: 'Cold Pressed Coconut Oil',
-    subtitle: null,
-    image_url: '/assets/hero-coconut-oil.png',
+    title: 'Wear the Season',
+    subtitle: 'Nourished by nature, made for you.',
+    image_url: '/assets/hero-wear-the-season.png',
     link_url: '/shop',
     placement: 'homepage_hero',
     is_active: true,
     sort_order: 1,
+    start_at: null,
+    end_at: null,
   },
   {
     id: 'banner-seed-2',
-    title: 'New Batch Just Pressed',
-    subtitle: 'Fresh stock of Virgin Coconut Oil is in — while it lasts.',
-    image_url: '/assets/hero-coconut-oil.png',
+    title: 'Pure by Nature. Trusted by You.',
+    subtitle: null,
+    image_url: '/assets/hero-pure-by-nature-dark.png',
+    link_url: '/shop',
+    placement: 'homepage_hero',
+    is_active: true,
+    sort_order: 2,
+    start_at: null,
+    end_at: null,
+  },
+  {
+    id: 'banner-seed-3',
+    title: 'Cold Pressed Coconut Oil',
+    subtitle: null,
+    image_url: '/assets/hero-pure-by-nature-light.png',
+    link_url: '/shop',
+    placement: 'homepage_hero',
+    is_active: true,
+    sort_order: 3,
+    start_at: null,
+    end_at: null,
+  },
+  {
+    id: 'banner-seed-4',
+    title: "Nature's Goodness, Now at a Special Price",
+    subtitle: 'Get 20% off your first order — use code GROOVE20.',
+    image_url: '/assets/marketing-panels.png',
     link_url: '/shop',
     placement: 'homepage_promo',
     is_active: true,
     sort_order: 1,
+    start_at: null,
+    end_at: null,
   },
 ];
 const newsletterSubscribers = [];
@@ -119,8 +175,48 @@ const contactMessages = [];
 const addresses = [];
 const wishlistItems = [];
 const reviews = [];
-const productVariants = [];
+// Demo size variants for the Cold-Pressed Coconut Oil (p1), matching the
+// 200ml/500ml/1L lineup — each has its own price/stock/weight so shipping
+// and totals are accurate per size.
+const productVariants = [
+  { id: 'var-1', product_id: 'p1', size: '200ml', color: null, price_paise: 21500, stock: 80, sku: 'GRV-CCO-200', image_url: null, weight_grams: 250, sort_order: 1 },
+  { id: 'var-2', product_id: 'p1', size: '500ml', color: null, price_paise: 42500, stock: 100, sku: 'GRV-CCO-500', image_url: null, weight_grams: 550, sort_order: 2 },
+  { id: 'var-3', product_id: 'p1', size: '1L', color: null, price_paise: 76500, stock: 40, sku: 'GRV-CCO-1L', image_url: null, weight_grams: 1050, sort_order: 3 },
+];
 const siteContent = new Map(); // key -> value object; populated with defaults in dataStore
+
+// Weight-based shipping — matched in ascending max_weight_grams order; the
+// last row (max_weight_grams: null) is the catch-all for anything heavier.
+// Starter values only — edit real numbers from Admin → Shipping Rates once
+// you know your actual courier costs.
+const shippingRateSlabs = [
+  { id: 'ship-1', max_weight_grams: 500, price_paise: 4000, sort_order: 1 },
+  { id: 'ship-2', max_weight_grams: 1000, price_paise: 6000, sort_order: 2 },
+  { id: 'ship-3', max_weight_grams: 2000, price_paise: 9000, sort_order: 3 },
+  { id: 'ship-4', max_weight_grams: null, price_paise: 12000, sort_order: 4 },
+];
+
+// Demo coupon so the checkout flow has something to test with out of the box —
+// code matches the "20% off your first order" promo card seeded above.
+const coupons = [
+  {
+    id: 'coupon-seed-1',
+    code: 'GROOVE20',
+    discount_type: 'percent',
+    discount_value: 20,
+    min_order_paise: 0,
+    max_discount_paise: 30000, // capped at ₹300 off
+    usage_limit: null,
+    times_used: 0,
+    is_active: true,
+    expires_at: null,
+  },
+];
+
+// Loyalty points ledger — one row per earn/redeem event. Balance for a
+// customer is the sum of points_delta across their rows (see
+// getLoyaltyBalance in dataStore.js).
+const loyaltyLedger = [];
 
 // Demo-only login accounts — clearly not for production use.
 // Once Supabase is connected, real accounts replace these entirely.
@@ -175,6 +271,7 @@ function nextOrderNumber() {
 module.exports = {
   categories,
   products,
+  PROMO_TAG_OPTIONS,
   orders,
   banners,
   newsletterSubscribers,
@@ -184,6 +281,9 @@ module.exports = {
   reviews,
   productVariants,
   siteContent,
+  shippingRateSlabs,
+  coupons,
+  loyaltyLedger,
   demoUsers,
   customerUsers,
   findUserByEmail,

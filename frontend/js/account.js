@@ -151,6 +151,34 @@ async function renderWishlistTab() {
   });
 }
 
+async function renderLoyaltyTab() {
+  const wrap = document.getElementById('account-tab-content');
+  wrap.innerHTML = '<p>Loading your Groove Points…</p>';
+  try {
+    const { balance, ledger } = await api('/api/loyalty/balance');
+    wrap.innerHTML = `
+      <div class="card" style="max-width:560px;">
+        <h3 class="mt-0">Groove Points</h3>
+        <p style="font-size:2rem;font-weight:700;margin:0;" class="mono">${balance}</p>
+        <p style="color:var(--moss-700);">Earned on every paid order, redeemable at checkout for a discount.</p>
+        <h4>History</h4>
+        ${
+          ledger.length
+            ? ledger
+                .map(
+                  (l) =>
+                    `<div class="flex-between" style="font-size:0.9rem;padding:6px 0;border-bottom:1px solid var(--sand-300);"><span>${l.reason === 'order_earned' ? 'Earned' : l.reason === 'order_redeemed' ? 'Redeemed' : 'Adjustment'} ${l.order_id ? `— order ${l.order_id}` : ''}</span><span class="mono">${l.points_delta > 0 ? '+' : ''}${l.points_delta}</span></div>`
+                )
+                .join('')
+            : '<p style="color:var(--moss-700);">No activity yet — points are earned once your first order is paid.</p>'
+        }
+      </div>
+    `;
+  } catch (err) {
+    wrap.innerHTML = `<div class="empty-state">${err.message || 'Could not load your Groove Points.'}</div>`;
+  }
+}
+
 async function renderProfileTab() {
   const user = getAuthUser();
   const wrap = document.getElementById('account-tab-content');
@@ -168,6 +196,7 @@ const ACCOUNT_TAB_RENDERERS = {
   orders: renderOrdersTab,
   addresses: renderAddressesTab,
   wishlist: renderWishlistTab,
+  loyalty: renderLoyaltyTab,
   profile: renderProfileTab,
 };
 

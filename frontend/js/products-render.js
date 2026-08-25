@@ -16,11 +16,18 @@ function productImageInner(product) {
 }
 
 function productCardHtml(product) {
-  const badge = product.is_bestseller
+  // Admin-set promo tags (multi-select, e.g. "Sale Live" + "Best Seller")
+  // take priority over the legacy single is_bestseller/is_new flags — shown
+  // as up to two small badges so a card never gets too cluttered.
+  const tagBadges = (product.promo_tags || []).slice(0, 2).map((tag) => `<span class="product-card__badge">${tag}</span>`);
+  const badgeInner = tagBadges.length
+    ? tagBadges.join('')
+    : product.is_bestseller
     ? '<span class="product-card__badge">Bestseller</span>'
     : product.is_new
     ? '<span class="product-card__badge product-card__badge--new">New</span>'
     : '';
+  const badge = badgeInner ? `<div class="product-card__badges">${badgeInner}</div>` : '';
 
   if (product.is_coming_soon) {
     return `

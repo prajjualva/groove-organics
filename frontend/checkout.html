@@ -39,6 +39,22 @@
           <div class="form-field"><label for="city">City</label><input id="city" required /></div>
           <div class="form-field"><label for="state">State</label><input id="state" required /></div>
         </div>
+        <h3>Payment Method</h3>
+        <div id="payment-method-choices" class="form-row" style="gap:16px;">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:400;"><input type="radio" name="payment-method" value="online" checked /> Pay Online (UPI / Card / Netbanking)</label>
+          <label style="display:flex;align-items:center;gap:8px;font-weight:400;" id="cod-choice-label"><input type="radio" name="payment-method" value="cod" /> Cash on Delivery</label>
+        </div>
+        <div id="loyalty-points-section" style="display:none;">
+          <h3>Groove Points</h3>
+          <p id="loyalty-balance-note" style="font-size:0.85rem;color:var(--moss-700);"></p>
+          <div class="form-field"><label for="loyalty-redeem">Points to redeem (optional)</label><input id="loyalty-redeem" type="number" min="0" value="0" /></div>
+        </div>
+        <h3>Promo Code</h3>
+        <div class="form-row">
+          <div class="form-field"><input id="coupon-code" placeholder="Enter coupon code (optional)" style="text-transform:uppercase;" /></div>
+          <div class="form-field"><button type="button" class="btn btn--outline" id="apply-coupon-btn" style="width:100%;">Apply</button></div>
+        </div>
+        <p class="form-error" id="coupon-note" style="display:none;"></p>
         <button class="btn btn--primary" type="submit" id="pay-btn" style="width:100%;margin-top:8px;">Place Order &amp; Pay</button>
         <p class="form-error" id="checkout-error" style="display:none;"></p>
       </form>

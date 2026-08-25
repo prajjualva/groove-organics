@@ -7,7 +7,17 @@ async function loadProduct() {
   }
   try {
     const { product } = await api(`/api/products/${encodeURIComponent(slug)}`, { auth: false });
-    document.title = `${product.name} — Groove Organics`;
+    document.title = product.seo_title || `${product.name} — Groove Organics`;
+    const metaDesc = product.seo_meta_description || product.short_description;
+    if (metaDesc) {
+      let metaTag = document.querySelector('meta[name="description"]');
+      if (!metaTag) {
+        metaTag = document.createElement('meta');
+        metaTag.setAttribute('name', 'description');
+        document.head.appendChild(metaTag);
+      }
+      metaTag.setAttribute('content', metaDesc);
+    }
 
     const priceHtml = product.compare_at_price_paise
       ? `<del>${formatRupees(product.compare_at_price_paise)}</del> ${formatRupees(product.price_paise)}`

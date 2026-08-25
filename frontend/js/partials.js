@@ -14,6 +14,7 @@ function renderNav(active = '') {
   const links = [
     ['/', 'Home', ''],
     ['/shop', 'Shop', 'shop'],
+    ['/deals', 'Deals', 'deals'],
     ['/about', 'Our Story', 'about'],
     ['/contact', 'Contact', 'contact'],
   ];
@@ -86,7 +87,7 @@ function renderFooter() {
             <h4>Shop</h4>
             <ul>
               <li><a href="/shop">All Oils</a></li>
-              <li><a href="/shop">Bestsellers</a></li>
+              <li><a href="/deals">Deals</a></li>
               <li><a href="/shop">Coming Soon</a></li>
             </ul>
           </div>
@@ -95,6 +96,10 @@ function renderFooter() {
             <ul>
               <li><a href="/about">Our Story</a></li>
               <li><a href="/contact">Contact</a></li>
+              <li><a href="/terms">Terms</a></li>
+              <li><a href="/privacy">Privacy</a></li>
+              <li><a href="/refund-policy">Refunds</a></li>
+              <li><a href="/shipping-policy">Shipping</a></li>
             </ul>
           </div>
           <div class="footer__col">

@@ -35,13 +35,13 @@ async function renderCartPage() {
   } catch {
     // fall back to the 5% default if the status endpoint is unreachable
   }
-  const { subtotal, gst, shipping, total } = cartEstimate(defaultGstRatePercent);
+  const { subtotal, gst, shipping, total } = await cartEstimate(defaultGstRatePercent);
 
   summaryWrap.innerHTML = `
     <h3 class="mt-0">Order Summary</h3>
-    <div class="flex-between"><span>Subtotal</span><span class="mono">${formatRupees(subtotal)}</span></div>
-    <div class="flex-between"><span>GST (est.)</span><span class="mono">${formatRupees(gst)}</span></div>
-    <div class="flex-between"><span>Shipping</span><span class="mono">${shipping > 0 ? formatRupees(shipping) : 'Free'}</span></div>
+    <div class="flex-between"><span>Subtotal <span style="font-size:0.75rem;color:var(--moss-700);">(before GST)</span></span><span class="mono">${formatRupees(subtotal)}</span></div>
+    <div class="flex-between"><span>GST (incl. in price, est.)</span><span class="mono">${formatRupees(gst)}</span></div>
+    <div class="flex-between"><span>Shipping (est.)</span><span class="mono">${shipping > 0 ? formatRupees(shipping) : 'Free'}</span></div>
     <hr style="border:none;border-top:1px solid var(--sand-300);margin:16px 0;" />
     <div class="flex-between" style="font-weight:700;font-size:1.1rem;"><span>Estimated Total</span><span class="mono">${formatRupees(total)}</span></div>
     <a href="/checkout" class="btn btn--primary" style="width:100%;margin-top:20px;">Proceed to Checkout</a>

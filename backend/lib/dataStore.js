@@ -118,6 +118,16 @@ async function createProduct(input) {
     sort_order: mock.products.length + 1,
     compare_at_price_paise: null,
     image_url: null,
+    gst_rate_percent: null,
+    shipping_charge_paise: 0,
+    weight_grams: null,
+    length_cm: null,
+    width_cm: null,
+    height_cm: null,
+    promo_tags: [],
+    hsn_code: null,
+    seo_title: null,
+    seo_meta_description: null,
     ...input,
   };
   mock.products.push(product);
@@ -179,36 +189,80 @@ async function getOrder(id) {
 // instead of the default 5%, or a heavier item that costs more to ship.
 // This looks up the authoritative rate/charge per line item server-side
 // rather than trusting whatever the shopper's cart happened to send.
+//
+// PRICING MODEL — GST-INCLUSIVE: the price entered in Admin (product.price_paise,
+// and unit_price_paise here) is exactly what the customer pays — it already
+// has GST baked in, the same way a price tag in an Indian shop works. GST is
+// therefore EXTRACTED from that price for the invoice breakup, never added on
+// top: base = inclusive * 100 / (100 + rate), gst = inclusive - base.
 async function priceOrderItems(items, defaultGstRatePercent) {
   return Promise.all(
     items.map(async (i) => {
       const product = i.product_id ? await getProductById(i.product_id).catch(() => null) : null;
       const gstRate = product && product.gst_rate_percent != null ? Number(product.gst_rate_percent) : Number(defaultGstRatePercent);
       const shippingPerUnit = product && product.shipping_charge_paise ? Number(product.shipping_charge_paise) : 0;
-      const lineSubtotal = i.unit_price_paise * i.quantity;
+      const lineInclusive = i.unit_price_paise * i.quantity; // what the customer actually pays for this line, tax included
+      const lineBase = Math.round((lineInclusive * 100) / (100 + gstRate)); // pre-tax value, extracted
+      const lineGst = lineInclusive - lineBase; // the GST embedded in lineInclusive
       return {
         ...i,
         gst_rate_percent: gstRate,
-        line_gst_paise: Math.round((lineSubtotal * gstRate) / 100),
+        line_base_paise: lineBase,
+        line_gst_paise: lineGst,
         line_shipping_paise: shippingPerUnit * i.quantity,
-        line_total_paise: lineSubtotal,
+        line_total_paise: lineInclusive, // GST-inclusive — this is the line amount actually charged
       };
     })
   );
 }
 
-async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0, userId = null }) {
+async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0, userId = null, couponCode = null, redeemPoints = 0 }) {
   const pricedItems = await priceOrderItems(items, gstRatePercent);
-  const subtotalPaise = pricedItems.reduce((sum, i) => sum + i.line_total_paise, 0);
+  // subtotalPaise is the pre-tax (base) total; gstPaise is the tax extracted from the
+  // inclusive prices above — subtotalPaise + gstPaise always equals the sum of what the
+  // customer actually pays for the products (the GST-inclusive line totals).
+  const subtotalPaise = pricedItems.reduce((sum, i) => sum + i.line_base_paise, 0);
   const gstPaise = pricedItems.reduce((sum, i) => sum + i.line_gst_paise, 0);
   const productShippingPaise = pricedItems.reduce((sum, i) => sum + i.line_shipping_paise, 0);
-  const totalShippingPaise = shippingPaise + productShippingPaise;
-  const totalPaise = subtotalPaise + gstPaise + totalShippingPaise;
+  let totalShippingPaise = shippingPaise + productShippingPaise;
 
+  // Coupon: simple order-level discount subtracted from the final total (computed on the
+  // full GST-inclusive price first, discount applied after) — never prorated per line.
+  let discountPaise = 0;
+  let appliedCoupon = null;
+  const preDiscountGoodsPaise = subtotalPaise + gstPaise; // sum of inclusive line totals
+  if (couponCode) {
+    const validation = await validateCoupon(couponCode, preDiscountGoodsPaise);
+    if (validation.valid) {
+      appliedCoupon = validation.coupon;
+      discountPaise = validation.discountPaise;
+    }
+  }
+
+  // Groove Points redemption stacks with a coupon — applied on top of
+  // whatever's left after the coupon, capped at loyalty_redeem_cap_percent
+  // of the order's goods value and the customer's actual points balance.
+  let loyaltyRedemption = { points: 0, discountPaise: 0 };
+  if (redeemPoints > 0 && userId) {
+    loyaltyRedemption = await previewLoyaltyRedemption(userId, redeemPoints, preDiscountGoodsPaise - discountPaise);
+    discountPaise += loyaltyRedemption.discountPaise;
+  }
+
+  // Free-shipping threshold applies AFTER the coupon discount.
+  const settings = await getStoreSettings();
+  const freeShippingThreshold = settings.free_shipping_threshold_paise;
+  if (freeShippingThreshold != null && preDiscountGoodsPaise - discountPaise >= freeShippingThreshold) {
+    totalShippingPaise = 0;
+  }
+
+  const totalPaise = subtotalPaise + gstPaise + totalShippingPaise - discountPaise;
+  const paymentGateway = customer.paymentMethod === 'cod' ? 'cod' : null;
+
+  let order;
   if (isConfigured) {
     if (!supabaseAdmin) throw new Error('Creating orders needs SUPABASE_SERVICE_ROLE_KEY set.');
     const orderNumber = `GRV-${Date.now().toString().slice(-8)}`;
-    const { data: order, error } = await supabaseAdmin
+    const { data: insertedOrder, error } = await supabaseAdmin
       .from('orders')
       .insert({
         order_number: orderNumber,
@@ -221,15 +275,18 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
         gst_paise: gstPaise,
         shipping_paise: totalShippingPaise,
         total_paise: totalPaise,
+        coupon_code: appliedCoupon ? appliedCoupon.code : null,
+        discount_paise: discountPaise,
         status: 'placed',
         payment_status: 'pending',
+        payment_gateway: paymentGateway,
       })
       .select()
       .single();
     if (error) throw error;
 
     const orderItems = pricedItems.map((i) => ({
-      order_id: order.id,
+      order_id: insertedOrder.id,
       product_id: i.product_id,
       product_name: i.name,
       variant_id: i.variant_id || null,
@@ -244,42 +301,61 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
     const { error: itemsError } = await supabaseAdmin.from('order_items').insert(orderItems);
     if (itemsError) throw itemsError;
 
-    return { ...order, order_items: orderItems };
+    order = { ...insertedOrder, order_items: orderItems };
+  } else {
+    order = {
+      id: `o_${Date.now()}`,
+      order_number: mock.nextOrderNumber(),
+      user_id: userId,
+      customer_name: customer.name,
+      customer_email: customer.email,
+      customer_phone: customer.phone,
+      shipping_address: customer.address,
+      subtotal_paise: subtotalPaise,
+      gst_paise: gstPaise,
+      shipping_paise: totalShippingPaise,
+      total_paise: totalPaise,
+      coupon_code: appliedCoupon ? appliedCoupon.code : null,
+      discount_paise: discountPaise,
+      status: 'placed',
+      payment_status: 'pending',
+      payment_gateway: paymentGateway,
+      payment_order_id: null,
+      payment_id: null,
+      tracking_number: null,
+      tracking_url: null,
+      courier_name: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      order_items: pricedItems.map((i) => ({
+        product_id: i.product_id,
+        product_name: i.name,
+        variant_id: i.variant_id || null,
+        variant_label: i.variant_label || null,
+        unit_price_paise: i.unit_price_paise,
+        quantity: i.quantity,
+        line_total_paise: i.line_total_paise,
+        gst_rate_percent: i.gst_rate_percent,
+        line_gst_paise: i.line_gst_paise,
+        line_shipping_paise: i.line_shipping_paise,
+      })),
+    };
+    mock.orders.push(order);
   }
 
-  const order = {
-    id: `o_${Date.now()}`,
-    order_number: mock.nextOrderNumber(),
-    user_id: userId,
-    customer_name: customer.name,
-    customer_email: customer.email,
-    customer_phone: customer.phone,
-    shipping_address: customer.address,
-    subtotal_paise: subtotalPaise,
-    gst_paise: gstPaise,
-    shipping_paise: totalShippingPaise,
-    total_paise: totalPaise,
-    status: 'placed',
-    payment_status: 'pending',
-    payment_gateway: null,
-    payment_order_id: null,
-    payment_id: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    order_items: pricedItems.map((i) => ({
-      product_id: i.product_id,
-      product_name: i.name,
-      variant_id: i.variant_id || null,
-      variant_label: i.variant_label || null,
-      unit_price_paise: i.unit_price_paise,
-      quantity: i.quantity,
-      line_total_paise: i.line_total_paise,
-      gst_rate_percent: i.gst_rate_percent,
-      line_gst_paise: i.line_gst_paise,
-      line_shipping_paise: i.line_shipping_paise,
-    })),
-  };
-  mock.orders.push(order);
+  if (appliedCoupon) {
+    await redeemCoupon(appliedCoupon.id).catch(() => {});
+  }
+  if (loyaltyRedemption.points > 0) {
+    await addLoyaltyEntry({
+      user_id: userId,
+      order_id: order.id,
+      points_delta: -loyaltyRedemption.points,
+      reason: 'order_redeemed',
+    }).catch(() => {});
+  }
+  // Groove Points are earned only once the order is actually paid (see markOrderPaid),
+  // not at creation time — a placed-but-unpaid order shouldn't accrue points.
   return order;
 }
 
@@ -302,12 +378,13 @@ async function updateOrderStatus(id, status) {
   return order;
 }
 
-async function markOrderPaid(id, { paymentGateway, paymentOrderId, paymentId }) {
+// Adds tracking details when staff mark an order Shipped — a plain
+// tracking-number + carrier-link pair (no live courier API in this phase).
+async function updateOrderTracking(id, { trackingNumber, trackingUrl, courierName }) {
   const patch = {
-    payment_status: 'paid',
-    payment_gateway: paymentGateway,
-    payment_order_id: paymentOrderId,
-    payment_id: paymentId,
+    tracking_number: trackingNumber || null,
+    tracking_url: trackingUrl || null,
+    courier_name: courierName || null,
     updated_at: new Date().toISOString(),
   };
   if (isConfigured) {
@@ -320,6 +397,314 @@ async function markOrderPaid(id, { paymentGateway, paymentOrderId, paymentId }) 
   if (!order) return null;
   Object.assign(order, patch);
   return order;
+}
+
+// Records the payment gateway's own order id against ours right after it's
+// created (before payment completes), so a later async webhook event —
+// which only knows the gateway's order id — can find our order again.
+async function attachPaymentOrderId(id, paymentOrderId) {
+  const patch = { payment_order_id: paymentOrderId, updated_at: new Date().toISOString() };
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Updating orders needs SUPABASE_SERVICE_ROLE_KEY set.');
+    const { error } = await supabaseAdmin.from('orders').update(patch).eq('id', id);
+    if (error) throw error;
+    return true;
+  }
+  const order = mock.orders.find((o) => o.id === id);
+  if (!order) return false;
+  Object.assign(order, patch);
+  return true;
+}
+
+async function getOrderByPaymentOrderId(paymentOrderId) {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client.from('orders').select('*').eq('payment_order_id', paymentOrderId).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  return mock.orders.find((o) => o.payment_order_id === paymentOrderId) || null;
+}
+
+async function markOrderPaid(id, { paymentGateway, paymentOrderId, paymentId }) {
+  const patch = {
+    payment_status: 'paid',
+    payment_gateway: paymentGateway,
+    payment_order_id: paymentOrderId,
+    payment_id: paymentId,
+    updated_at: new Date().toISOString(),
+  };
+  let order;
+  let alreadyPaid = false;
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Updating orders needs SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data: existing } = await supabaseAdmin.from('orders').select('payment_status').eq('id', id).single();
+    alreadyPaid = existing && existing.payment_status === 'paid';
+    const { data, error } = await supabaseAdmin.from('orders').update(patch).eq('id', id).select().single();
+    if (error) throw error;
+    order = data;
+  } else {
+    order = mock.orders.find((o) => o.id === id);
+    if (!order) return null;
+    alreadyPaid = order.payment_status === 'paid';
+    Object.assign(order, patch);
+  }
+  // Groove Points are earned once, on the product subtotal only (not GST or shipping),
+  // the moment an order first becomes paid — never on repeat calls for the same order.
+  if (!alreadyPaid && order.user_id) {
+    await earnLoyaltyPoints(order.user_id, order.id, order.subtotal_paise).catch(() => {});
+  }
+  return order;
+}
+
+// --- Store settings (a thin, admin-editable wrapper over the site_content
+// "store_settings" key — see DEFAULT_CONTENT above for every field). ---
+async function getStoreSettings() {
+  const content = await listContent();
+  return { ...DEFAULT_CONTENT.store_settings, ...(content.store_settings || {}) };
+}
+
+// --- Coupons ---
+async function listCoupons() {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client.from('coupons').select('*').order('code', { ascending: true });
+    if (error) throw error;
+    return data;
+  }
+  return mock.coupons;
+}
+
+async function createCoupon(input) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('coupons').insert(input).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const coupon = {
+    id: `coupon_${Date.now()}`,
+    discount_type: 'percent',
+    min_order_paise: 0,
+    max_discount_paise: null,
+    usage_limit: null,
+    times_used: 0,
+    is_active: true,
+    expires_at: null,
+    ...input,
+    code: String(input.code || '').toUpperCase(),
+  };
+  mock.coupons.push(coupon);
+  return coupon;
+}
+
+async function updateCoupon(id, patch) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('coupons').update(patch).eq('id', id).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const coupon = mock.coupons.find((c) => c.id === id);
+  if (!coupon) return null;
+  Object.assign(coupon, patch);
+  return coupon;
+}
+
+async function deleteCoupon(id) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { error } = await supabaseAdmin.from('coupons').delete().eq('id', id);
+    if (error) throw error;
+    return true;
+  }
+  const idx = mock.coupons.findIndex((c) => c.id === id);
+  if (idx === -1) return false;
+  mock.coupons.splice(idx, 1);
+  return true;
+}
+
+// Validates a coupon code server-side against the GST-inclusive goods total
+// (never trust a discount amount sent by the client). Returns
+// { valid: true, coupon, discountPaise } or { valid: false, reason }.
+async function validateCoupon(code, goodsPaise) {
+  if (!code) return { valid: false, reason: 'No code provided.' };
+  const all = await listCoupons();
+  const coupon = all.find((c) => c.code.toUpperCase() === String(code).toUpperCase());
+  if (!coupon) return { valid: false, reason: 'Coupon code not found.' };
+  if (!coupon.is_active) return { valid: false, reason: 'This coupon is no longer active.' };
+  if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) return { valid: false, reason: 'This coupon has expired.' };
+  if (coupon.usage_limit != null && coupon.times_used >= coupon.usage_limit) return { valid: false, reason: 'This coupon has reached its usage limit.' };
+  if (coupon.min_order_paise && goodsPaise < coupon.min_order_paise) {
+    return { valid: false, reason: `Minimum order of ₹${(coupon.min_order_paise / 100).toFixed(0)} required for this coupon.` };
+  }
+  let discountPaise =
+    coupon.discount_type === 'percent' ? Math.round((goodsPaise * Number(coupon.discount_value)) / 100) : Number(coupon.discount_value);
+  if (coupon.max_discount_paise != null) discountPaise = Math.min(discountPaise, coupon.max_discount_paise);
+  discountPaise = Math.max(0, Math.min(discountPaise, goodsPaise));
+  return { valid: true, coupon, discountPaise };
+}
+
+async function redeemCoupon(id) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data: current, error: fetchErr } = await supabaseAdmin.from('coupons').select('times_used').eq('id', id).single();
+    if (fetchErr) throw fetchErr;
+    const { error } = await supabaseAdmin.from('coupons').update({ times_used: (current.times_used || 0) + 1 }).eq('id', id);
+    if (error) throw error;
+    return true;
+  }
+  const coupon = mock.coupons.find((c) => c.id === id);
+  if (!coupon) return false;
+  coupon.times_used = (coupon.times_used || 0) + 1;
+  return true;
+}
+
+// --- Weight-based shipping rate slabs ---
+async function listShippingRateSlabs() {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client.from('shipping_rate_slabs').select('*').order('sort_order', { ascending: true });
+    if (error) throw error;
+    return data;
+  }
+  return [...mock.shippingRateSlabs].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+}
+
+async function createShippingRateSlab(input) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('shipping_rate_slabs').insert(input).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const slab = { id: `ship_${Date.now()}`, sort_order: mock.shippingRateSlabs.length + 1, ...input };
+  mock.shippingRateSlabs.push(slab);
+  return slab;
+}
+
+async function updateShippingRateSlab(id, patch) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('shipping_rate_slabs').update(patch).eq('id', id).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const slab = mock.shippingRateSlabs.find((s) => s.id === id);
+  if (!slab) return null;
+  Object.assign(slab, patch);
+  return slab;
+}
+
+async function deleteShippingRateSlab(id) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { error } = await supabaseAdmin.from('shipping_rate_slabs').delete().eq('id', id);
+    if (error) throw error;
+    return true;
+  }
+  const idx = mock.shippingRateSlabs.findIndex((s) => s.id === id);
+  if (idx === -1) return false;
+  mock.shippingRateSlabs.splice(idx, 1);
+  return true;
+}
+
+// Chargeable weight = max(actual weight, volumetric weight), matched against
+// the slabs in ascending max_weight_grams order; the row with max_weight_grams
+// null is the catch-all for anything heavier than every other slab.
+async function computeShippingForWeight(totalGrams) {
+  const slabs = await listShippingRateSlabs();
+  const sorted = [...slabs].sort((a, b) => {
+    if (a.max_weight_grams == null) return 1;
+    if (b.max_weight_grams == null) return -1;
+    return a.max_weight_grams - b.max_weight_grams;
+  });
+  const match = sorted.find((s) => s.max_weight_grams == null || totalGrams <= s.max_weight_grams);
+  return match ? Number(match.price_paise) : 0;
+}
+
+// --- Groove Points loyalty (ledger-based — balance is the sum of points_delta) ---
+async function listLoyaltyLedger(userId) {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client
+      .from('loyalty_ledger')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+  return mock.loyaltyLedger.filter((l) => l.user_id === userId).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+}
+
+async function getLoyaltyBalance(userId) {
+  const rows = await listLoyaltyLedger(userId);
+  return rows.reduce((sum, r) => sum + r.points_delta, 0);
+}
+
+async function addLoyaltyEntry(entry) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('loyalty_ledger').insert(entry).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const row = { id: `loy_${Date.now()}_${Math.round(Math.random() * 1e6)}`, created_at: new Date().toISOString(), ...entry };
+  mock.loyaltyLedger.push(row);
+  return row;
+}
+
+async function earnLoyaltyPoints(userId, orderId, productSubtotalPaise) {
+  const settings = await getStoreSettings();
+  if (!settings.loyalty_points_enabled) return null;
+  const rate = Number(settings.loyalty_earn_rate_paise_per_point) || 10000;
+  const points = Math.floor(productSubtotalPaise / rate);
+  if (points <= 0) return null;
+  return addLoyaltyEntry({
+    user_id: userId,
+    order_id: orderId,
+    points_delta: points,
+    reason: 'order_earned',
+  });
+}
+
+// Computes what a points redemption would actually be worth WITHOUT writing
+// anything — capped at both the customer's balance and
+// loyalty_redeem_cap_percent of capBasisPaise (the order's goods value, after
+// any coupon). Called from createOrder so the discount and the ledger entry
+// use the exact same, server-computed number.
+async function previewLoyaltyRedemption(userId, pointsRequested, capBasisPaise) {
+  const settings = await getStoreSettings();
+  if (!settings.loyalty_points_enabled || !userId || !pointsRequested) return { points: 0, discountPaise: 0 };
+  const balance = await getLoyaltyBalance(userId);
+  const redeemValue = Number(settings.loyalty_redeem_value_paise_per_point) || 100;
+  const capPercent = settings.loyalty_redeem_cap_percent != null ? settings.loyalty_redeem_cap_percent : 50;
+  const maxDiscountByCap = Math.max(0, Math.floor((capBasisPaise * capPercent) / 100));
+  let points = Math.max(0, Math.min(pointsRequested, balance));
+  let discountPaise = points * redeemValue;
+  if (discountPaise > maxDiscountByCap) {
+    points = Math.floor(maxDiscountByCap / redeemValue);
+    discountPaise = points * redeemValue;
+  }
+  return { points, discountPaise };
+}
+
+async function redeemLoyaltyPoints(userId, orderId, pointsToRedeem) {
+  const settings = await getStoreSettings();
+  if (!settings.loyalty_points_enabled) return { redeemed: 0, discountPaise: 0 };
+  const balance = await getLoyaltyBalance(userId);
+  const points = Math.max(0, Math.min(pointsToRedeem, balance));
+  if (points <= 0) return { redeemed: 0, discountPaise: 0 };
+  const redeemValue = Number(settings.loyalty_redeem_value_paise_per_point) || 100;
+  const discountPaise = points * redeemValue;
+  await addLoyaltyEntry({
+    user_id: userId,
+    order_id: orderId,
+    points_delta: -points,
+    reason: 'order_redeemed',
+  });
+  return { redeemed: points, discountPaise };
 }
 
 async function addNewsletterSubscriber(email) {
@@ -631,6 +1016,44 @@ const DEFAULT_CONTENT = {
       { title: 'Bottle', body: 'Hand-poured into reusable glass, labelled and sealed in small batches.' },
     ],
   },
+  // Business/legal details used on invoices, the contact page, and to
+  // switch on checkout behavior (COD, free shipping). Everything here
+  // starts blank/off on purpose — fill it in from Admin → Store Settings.
+  // Nothing here is a secret (no API keys) — those still only ever live in
+  // backend/.env, never in this admin-editable content store.
+  store_settings: {
+    business_legal_name: '',
+    gstin: '',
+    business_address: '',
+    support_email: '',
+    support_phone: '',
+    charge_gst: true,
+    cod_enabled: false,
+    cod_extra_charge_paise: 0,
+    free_shipping_threshold_paise: 99900, // ₹999 — set to 0 to disable
+    loyalty_points_enabled: false,
+    loyalty_earn_rate_paise_per_point: 10000, // ₹100 spent = 1 point, at the default rate
+    loyalty_redeem_value_paise_per_point: 100, // 1 point = ₹1 off when redeemed
+    loyalty_redeem_cap_percent: 50, // points can cover at most this % of an order's value
+    low_stock_threshold: 10, // Admin → Reports flags products at/below this stock level
+    blocked_pincodes: [], // array of 6-digit strings we don't currently deliver to
+  },
+  page_terms: {
+    title: 'Terms & Conditions',
+    body: 'Welcome to Groove Organics. By using this website and placing an order, you agree to the terms below.\n\nAll products are sold subject to availability. Prices are listed in Indian Rupees (INR) and include applicable taxes unless stated otherwise. We reserve the right to refuse or cancel any order at our discretion, including in cases of pricing errors or suspected fraud.\n\nThis is placeholder text — please review and replace it with terms appropriate for your business before going live, ideally with input from a legal professional.',
+  },
+  page_privacy: {
+    title: 'Privacy Policy',
+    body: 'Groove Organics collects only the information needed to process your order and improve your shopping experience: your name, contact details, shipping address, and order history.\n\nWe do not sell your personal information to third parties. Payment details are handled directly by our payment gateway (Razorpay) and are never stored on our servers.\n\nThis is placeholder text — please review and replace it with a privacy policy appropriate for your business before going live, ideally with input from a legal professional.',
+  },
+  page_refund_policy: {
+    title: 'Refund & Return Policy',
+    body: 'If you receive a damaged, defective, or incorrect item, please contact us within 48 hours of delivery with photos of the product, and we will arrange a replacement or refund.\n\nDue to the nature of our products (consumable food items), we generally cannot accept returns of opened products for hygiene reasons, except in cases of damage or defect.\n\nApproved refunds are processed to the original payment method within 5-7 business days.\n\nThis is placeholder text — please review and replace it with a policy appropriate for your business before going live.',
+  },
+  page_shipping_policy: {
+    title: 'Shipping Policy',
+    body: 'We currently ship across India. Orders are typically dispatched within 1-2 business days of confirmation.\n\nShipping charges are calculated at checkout based on the weight of your order, and shown before you pay. Orders above the free-shipping threshold (shown at checkout) ship free.\n\nDelivery timelines vary by location, typically 3-7 business days after dispatch.\n\nThis is placeholder text — please review and replace it with details appropriate for your business before going live.',
+  },
 };
 
 async function listContent() {
@@ -747,6 +1170,9 @@ module.exports = {
   getOrder,
   createOrder,
   updateOrderStatus,
+  updateOrderTracking,
+  attachPaymentOrderId,
+  getOrderByPaymentOrderId,
   markOrderPaid,
   addNewsletterSubscriber,
   addContactMessage,
@@ -770,4 +1196,22 @@ module.exports = {
   createVariant,
   updateVariant,
   deleteVariant,
+  getStoreSettings,
+  listCoupons,
+  createCoupon,
+  updateCoupon,
+  deleteCoupon,
+  validateCoupon,
+  redeemCoupon,
+  listShippingRateSlabs,
+  createShippingRateSlab,
+  updateShippingRateSlab,
+  deleteShippingRateSlab,
+  computeShippingForWeight,
+  listLoyaltyLedger,
+  getLoyaltyBalance,
+  addLoyaltyEntry,
+  earnLoyaltyPoints,
+  previewLoyaltyRedemption,
+  redeemLoyaltyPoints,
 };

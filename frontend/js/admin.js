@@ -4,6 +4,11 @@
 
 let CURRENT_TAB = 'products';
 
+// Must match backend/lib/mockStore.js's PROMO_TAG_OPTIONS — preset badges an
+// admin can attach to a product (multiple at once), used for the product-card
+// badge and to group products onto the /deals page.
+const PROMO_TAG_OPTIONS = ['Sale Live', 'New Deal', 'Best Seller', 'Festive Offer', 'Limited Stock', 'Bundle Deal'];
+
 function requireAdminOrRedirect() {
   const user = getAuthUser();
   if (!user || !getAuthToken()) {
@@ -120,11 +125,17 @@ async function renderProductsTab() {
         <td><input type="number" min="0" max="28" step="0.1" value="${p.gst_rate_percent != null ? p.gst_rate_percent : ''}" placeholder="${defaultGstRatePercent}" data-gst="${p.id}" style="width:64px;padding:6px;border-radius:6px;border:1px solid var(--sand-300);" /></td>
         <td><input type="number" min="0" step="0.01" value="${p.shipping_charge_paise ? (p.shipping_charge_paise / 100).toFixed(2) : ''}" placeholder="0" data-shipping="${p.id}" style="width:70px;padding:6px;border-radius:6px;border:1px solid var(--sand-300);" /></td>
         <td><input type="checkbox" data-active="${p.id}" ${p.is_active ? 'checked' : ''} /></td>
-        <td><button class="btn btn--outline btn--sm" data-toggle-variants="${p.id}">Sizes / Colors</button></td>
+        <td>
+          <button class="btn btn--outline btn--sm" data-toggle-variants="${p.id}">Sizes / Colors</button>
+          <button class="btn btn--outline btn--sm" data-toggle-more="${p.id}" style="margin-top:4px;">Sale, Shipping & Tags</button>
+        </td>
         <td><button class="btn btn--outline btn--sm" data-delete="${p.id}">Delete</button></td>
       </tr>
       <tr class="variants-row" data-variants-for="${p.id}" style="display:none;">
         <td colspan="10"><div class="variants-panel" data-variants-panel="${p.id}"></div></td>
+      </tr>
+      <tr class="variants-row" data-more-for="${p.id}" style="display:none;">
+        <td colspan="10"><div class="variants-panel" data-more-panel="${p.id}"></div></td>
       </tr>`
     )
     .join('');
@@ -155,6 +166,15 @@ async function renderProductsTab() {
       const isHidden = row.style.display === 'none';
       row.style.display = isHidden ? '' : 'none';
       if (isHidden) await renderVariantsPanel(productId);
+    });
+  });
+  tbody.querySelectorAll('[data-toggle-more]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const productId = btn.getAttribute('data-toggle-more');
+      const row = tbody.querySelector(`[data-more-for="${productId}"]`);
+      const isHidden = row.style.display === 'none';
+      row.style.display = isHidden ? '' : 'none';
+      if (isHidden) renderMoreDetailsPanel(productId, products.find((p) => p.id === productId));
     });
   });
 
@@ -230,6 +250,73 @@ async function renderProductsTab() {
       errorEl.textContent = err.message;
       errorEl.style.display = 'block';
     }
+  });
+}
+
+// Sale price, weight/dimensions (for automatic weight-based shipping), HSN
+// code and promo-tag badges — grouped together since they're all edited
+// less often than price/stock/GST, opened from "Sale, Shipping & Tags".
+function renderMoreDetailsPanel(productId, product) {
+  const panel = document.querySelector(`[data-more-panel="${productId}"]`);
+  const tags = product.promo_tags || [];
+  panel.innerHTML = `
+    <div class="form-row">
+      <div class="form-field">
+        <label>Sale price (₹) <span style="font-weight:400;color:var(--moss-700);">(shown struck-through against the regular price — leave blank for no sale)</span></label>
+        <input type="number" min="0" step="0.01" data-more-compare value="${product.compare_at_price_paise ? (product.compare_at_price_paise / 100).toFixed(2) : ''}" />
+      </div>
+      <div class="form-field"><label>HSN code</label><input data-more-hsn value="${product.hsn_code || ''}" placeholder="e.g. 15131900" /></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field"><label>Weight (grams)</label><input type="number" min="0" data-more-weight value="${product.weight_grams != null ? product.weight_grams : ''}" /></div>
+      <div class="form-field"><label>Length (cm)</label><input type="number" min="0" step="0.1" data-more-length value="${product.length_cm != null ? product.length_cm : ''}" /></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field"><label>Width (cm)</label><input type="number" min="0" step="0.1" data-more-width value="${product.width_cm != null ? product.width_cm : ''}" /></div>
+      <div class="form-field"><label>Height (cm)</label><input type="number" min="0" step="0.1" data-more-height value="${product.height_cm != null ? product.height_cm : ''}" /></div>
+    </div>
+    <p style="font-size:0.8rem;color:var(--moss-700);">Weight and dimensions drive automatic shipping cost (Admin → Shipping Rates) — leave them blank if you're using the flat "Extra shipping" override in the table above instead.</p>
+    <div class="form-field"><label>SEO title (optional, browser tab / search result title)</label><input data-more-seo-title value="${escapeAttr(product.seo_title)}" placeholder="${escapeAttr(product.name)} — Groove Organics" /></div>
+    <div class="form-field"><label>SEO meta description (optional)</label><textarea data-more-seo-desc rows="2">${product.seo_meta_description || ''}</textarea></div>
+    <div class="form-field">
+      <label>Promo tags / badges (pick any that apply)</label>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;">
+        ${PROMO_TAG_OPTIONS.map(
+          (tag) => `
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:0.85rem;">
+            <input type="checkbox" data-more-tag value="${tag}" ${tags.includes(tag) ? 'checked' : ''} /> ${tag}
+          </label>`
+        ).join('')}
+      </div>
+      <p style="font-size:0.8rem;color:var(--moss-700);">Tagged products automatically appear on the <a href="/deals" target="_blank">/deals</a> page, grouped by tag.</p>
+    </div>
+    <button class="btn btn--primary btn--sm" data-save-more="${productId}">Save</button>
+    <span class="form-error" data-more-saved style="display:none;color:var(--moss-700);">Saved.</span>
+  `;
+  panel.querySelector('[data-save-more]').addEventListener('click', async () => {
+    const compareRaw = panel.querySelector('[data-more-compare]').value.trim();
+    const weightRaw = panel.querySelector('[data-more-weight]').value.trim();
+    const lengthRaw = panel.querySelector('[data-more-length]').value.trim();
+    const widthRaw = panel.querySelector('[data-more-width]').value.trim();
+    const heightRaw = panel.querySelector('[data-more-height]').value.trim();
+    const selectedTags = Array.from(panel.querySelectorAll('[data-more-tag]:checked')).map((el) => el.value);
+    await api(`/api/products/${productId}`, {
+      method: 'PATCH',
+      body: {
+        compare_at_price_paise: compareRaw === '' ? null : Math.round(parseFloat(compareRaw) * 100),
+        hsn_code: panel.querySelector('[data-more-hsn]').value.trim() || null,
+        weight_grams: weightRaw === '' ? null : parseInt(weightRaw, 10),
+        length_cm: lengthRaw === '' ? null : parseFloat(lengthRaw),
+        width_cm: widthRaw === '' ? null : parseFloat(widthRaw),
+        height_cm: heightRaw === '' ? null : parseFloat(heightRaw),
+        promo_tags: selectedTags,
+        seo_title: panel.querySelector('[data-more-seo-title]').value.trim() || null,
+        seo_meta_description: panel.querySelector('[data-more-seo-desc]').value.trim() || null,
+      },
+    });
+    const saved = panel.querySelector('[data-more-saved]');
+    saved.style.display = 'inline';
+    setTimeout(() => (saved.style.display = 'none'), 2000);
   });
 }
 
@@ -416,7 +503,7 @@ async function renderOrdersTab() {
   wrap.innerHTML = `
     <div class="card">
       <table class="data-table">
-        <thead><tr><th>Order #</th><th>Customer</th><th>Total</th><th>Payment</th><th>Status</th><th>Invoice</th></tr></thead>
+        <thead><tr><th>Order #</th><th>Customer</th><th>Total</th><th>Payment</th><th>Status</th><th>Tracking</th><th>Invoice</th></tr></thead>
         <tbody>
           ${orders
             .map(
@@ -424,14 +511,23 @@ async function renderOrdersTab() {
             <tr data-id="${o.id}">
               <td class="mono">${o.order_number}</td>
               <td>${o.customer_name}<br /><span style="font-size:0.78rem;opacity:0.6;">${o.customer_email}</span></td>
-              <td class="mono">${formatRupees(o.total_paise)}</td>
-              <td><span class="status-pill status-${o.payment_status === 'paid' ? 'delivered' : 'placed'}">${o.payment_status}</span></td>
+              <td class="mono">${formatRupees(o.total_paise)}${o.discount_paise ? `<br /><span style="font-size:0.75rem;color:var(--moss-700);">−${formatRupees(o.discount_paise)} (${o.coupon_code || 'coupon'})</span>` : ''}</td>
+              <td>
+                <span class="status-pill status-${o.payment_status === 'paid' ? 'delivered' : 'placed'}">${o.payment_status}</span>
+                <div style="font-size:0.75rem;color:var(--moss-700);">${o.payment_gateway || '—'}</div>
+                ${o.payment_gateway === 'cod' && o.payment_status !== 'paid' ? `<button class="btn btn--outline btn--sm" data-mark-cod-paid="${o.id}" style="margin-top:4px;">Mark COD Paid</button>` : ''}
+              </td>
               <td>
                 <select data-status="${o.id}">
                   ${['placed', 'packed', 'shipped', 'delivered', 'cancelled']
                     .map((s) => `<option value="${s}" ${s === o.status ? 'selected' : ''}>${s}</option>`)
                     .join('')}
                 </select>
+              </td>
+              <td>
+                <input placeholder="Tracking number" data-tracking-number="${o.id}" value="${o.tracking_number || ''}" style="width:120px;padding:4px;border-radius:6px;border:1px solid var(--sand-300);font-size:0.78rem;margin-bottom:4px;" /><br />
+                <input placeholder="Tracking URL" data-tracking-url="${o.id}" value="${o.tracking_url || ''}" style="width:120px;padding:4px;border-radius:6px;border:1px solid var(--sand-300);font-size:0.78rem;margin-bottom:4px;" /><br />
+                <button class="btn btn--outline btn--sm" data-save-tracking="${o.id}">Save</button>
               </td>
               <td><a href="/api/orders/${o.id}/invoice" target="_blank" rel="noopener">PDF</a></td>
             </tr>`
@@ -448,6 +544,23 @@ async function renderOrdersTab() {
         method: 'PATCH',
         body: { status: select.value },
       });
+    });
+  });
+  wrap.querySelectorAll('[data-mark-cod-paid]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Confirm cash was collected for this order?')) return;
+      await api(`/api/orders/${btn.getAttribute('data-mark-cod-paid')}/mark-cod-paid`, { method: 'PATCH' });
+      renderOrdersTab();
+    });
+  });
+  wrap.querySelectorAll('[data-save-tracking]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-save-tracking');
+      const trackingNumber = wrap.querySelector(`[data-tracking-number="${id}"]`).value.trim();
+      const trackingUrl = wrap.querySelector(`[data-tracking-url="${id}"]`).value.trim();
+      await api(`/api/orders/${id}/tracking`, { method: 'PATCH', body: { trackingNumber, trackingUrl } });
+      btn.textContent = 'Saved';
+      setTimeout(() => (btn.textContent = 'Save'), 1500);
     });
   });
 }
@@ -748,26 +861,356 @@ function escapeAttr(str) {
 async function renderReportsTab() {
   const wrap = document.getElementById('tab-content');
   wrap.innerHTML = '<p>Loading report…</p>';
-  const { orders } = await api('/api/orders');
+  const [{ orders }, { products }, { coupons }, settings] = await Promise.all([
+    api('/api/orders'),
+    api('/api/products'),
+    api('/api/coupons').catch(() => ({ coupons: [] })),
+    api('/api/content', { auth: false }).then((r) => r.content.store_settings || {}),
+  ]);
 
   const paidOrders = orders.filter((o) => o.payment_status === 'paid');
   const revenue = paidOrders.reduce((sum, o) => sum + o.total_paise, 0);
   const byStatus = {};
   orders.forEach((o) => (byStatus[o.status] = (byStatus[o.status] || 0) + 1));
 
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const monthStr = todayStr.slice(0, 7);
+  const todayOrders = orders.filter((o) => (o.created_at || '').slice(0, 10) === todayStr);
+  const todayPaid = todayOrders.filter((o) => o.payment_status === 'paid');
+  const todaySales = todayPaid.reduce((sum, o) => sum + o.total_paise, 0);
+  const monthRevenue = paidOrders.filter((o) => (o.created_at || '').slice(0, 7) === monthStr).reduce((sum, o) => sum + o.total_paise, 0);
+  const pendingOrders = orders.filter((o) => !['delivered', 'cancelled'].includes(o.status));
+
+  const lowStockThreshold = settings.low_stock_threshold != null ? settings.low_stock_threshold : 10;
+  const lowStock = products.filter((p) => !p.is_coming_soon && p.stock <= lowStockThreshold).sort((a, b) => a.stock - b.stock);
+
+  const salesByProduct = {};
+  paidOrders.forEach((o) => {
+    (o.order_items || []).forEach((i) => {
+      salesByProduct[i.product_name] = (salesByProduct[i.product_name] || 0) + i.quantity;
+    });
+  });
+  const bestSellers = Object.entries(salesByProduct).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
   wrap.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-bottom:24px;">
-      <div class="card"><div class="eyebrow">Total Orders</div><h2 style="margin:0;">${orders.length}</h2></div>
-      <div class="card"><div class="eyebrow">Paid Orders</div><h2 style="margin:0;">${paidOrders.length}</h2></div>
-      <div class="card"><div class="eyebrow">Revenue (Paid)</div><h2 style="margin:0;" class="mono">${formatRupees(revenue)}</h2></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;">
+      <div class="card"><div class="eyebrow">Today's Sales</div><h2 style="margin:0;" class="mono">${formatRupees(todaySales)}</h2></div>
+      <div class="card"><div class="eyebrow">Today's Orders</div><h2 style="margin:0;">${todayOrders.length}</h2></div>
+      <div class="card"><div class="eyebrow">Monthly Revenue</div><h2 style="margin:0;" class="mono">${formatRupees(monthRevenue)}</h2></div>
+      <div class="card"><div class="eyebrow">Pending Orders</div><h2 style="margin:0;">${pendingOrders.length}</h2></div>
     </div>
-    <div class="card">
-      <h3 class="mt-0">Orders by status</h3>
-      ${Object.entries(byStatus)
-        .map(([status, count]) => `<div class="flex-between"><span class="status-pill status-${status}">${status}</span><span class="mono">${count}</span></div>`)
-        .join('') || '<p>No orders yet.</p>'}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
+      <div class="card">
+        <h3 class="mt-0">Low stock (≤ ${lowStockThreshold})</h3>
+        ${lowStock.length ? lowStock.map((p) => `<div class="flex-between"><span>${p.name}</span><span class="mono">${p.stock}</span></div>`).join('') : '<p style="color:var(--moss-700);">Nothing low on stock.</p>'}
+      </div>
+      <div class="card">
+        <h3 class="mt-0">Best sellers (by units, paid orders)</h3>
+        ${bestSellers.length ? bestSellers.map(([name, qty]) => `<div class="flex-between"><span>${name}</span><span class="mono">${qty}</span></div>`).join('') : '<p style="color:var(--moss-700);">No paid orders yet.</p>'}
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div class="card">
+        <h3 class="mt-0">Orders by status</h3>
+        ${Object.entries(byStatus)
+          .map(([status, count]) => `<div class="flex-between"><span class="status-pill status-${status}">${status}</span><span class="mono">${count}</span></div>`)
+          .join('') || '<p>No orders yet.</p>'}
+      </div>
+      <div class="card">
+        <h3 class="mt-0">Coupon usage</h3>
+        ${
+          coupons.length
+            ? coupons
+                .map((c) => `<div class="flex-between"><span class="mono">${c.code}</span><span>${c.times_used}${c.usage_limit ? ` / ${c.usage_limit}` : ''} used</span></div>`)
+                .join('')
+            : '<p style="color:var(--moss-700);">No coupons yet — add one from Admin → Coupons.</p>'
+        }
+      </div>
     </div>
   `;
+}
+
+const LEGAL_PAGE_TABS = [
+  { key: 'page_terms', label: 'Terms & Conditions' },
+  { key: 'page_privacy', label: 'Privacy Policy' },
+  { key: 'page_refund_policy', label: 'Refund & Return Policy' },
+  { key: 'page_shipping_policy', label: 'Shipping Policy' },
+];
+
+async function renderLegalTab() {
+  const wrap = document.getElementById('tab-content');
+  wrap.innerHTML = '<p>Loading legal pages…</p>';
+  const { content } = await api('/api/content', { auth: false });
+
+  wrap.innerHTML = LEGAL_PAGE_TABS.map((page) => {
+    const value = content[page.key] || { title: page.label, body: '' };
+    return `
+      <div class="card" style="margin-bottom:20px;">
+        <h3 class="mt-0">${page.label}</h3>
+        <div class="form-field"><label>Page title</label><input class="lp-title" data-key="${page.key}" value="${escapeAttr(value.title)}" /></div>
+        <div class="form-field"><label>Body</label><textarea class="lp-body" data-key="${page.key}" rows="8">${value.body || ''}</textarea></div>
+        <button class="btn btn--primary btn--sm" data-lp-save="${page.key}">Save</button>
+        <span class="form-error" data-lp-saved="${page.key}" style="display:none;color:var(--moss-700);">Saved.</span>
+      </div>`;
+  }).join('');
+
+  wrap.querySelectorAll('[data-lp-save]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const key = btn.getAttribute('data-lp-save');
+      const title = wrap.querySelector(`.lp-title[data-key="${key}"]`).value;
+      const body = wrap.querySelector(`.lp-body[data-key="${key}"]`).value;
+      await api(`/api/content/${key}`, { method: 'PATCH', body: { title, body } });
+      const saved = wrap.querySelector(`[data-lp-saved="${key}"]`);
+      saved.style.display = 'inline';
+      setTimeout(() => (saved.style.display = 'none'), 2000);
+    });
+  });
+}
+
+async function renderStoreSettingsTab() {
+  const wrap = document.getElementById('tab-content');
+  wrap.innerHTML = '<p>Loading settings…</p>';
+  const { content } = await api('/api/content', { auth: false });
+  const s = content.store_settings || {};
+
+  wrap.innerHTML = `
+    <div class="card">
+      <h3 class="mt-0">Business details</h3>
+      <p style="font-size:0.85rem;color:var(--moss-700);">Used on invoices and the contact page. No API keys or secrets go here — those stay in backend/.env.</p>
+      <div class="form-row">
+        <div class="form-field"><label>Legal business name</label><input id="ss-legal-name" value="${escapeAttr(s.business_legal_name)}" /></div>
+        <div class="form-field"><label>GSTIN</label><input id="ss-gstin" value="${escapeAttr(s.gstin)}" /></div>
+      </div>
+      <div class="form-field"><label>Business address</label><textarea id="ss-address" rows="2">${escapeAttr(s.business_address)}</textarea></div>
+      <div class="form-row">
+        <div class="form-field"><label>Support email</label><input id="ss-support-email" value="${escapeAttr(s.support_email)}" /></div>
+        <div class="form-field"><label>Support phone</label><input id="ss-support-phone" value="${escapeAttr(s.support_phone)}" /></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3 class="mt-0">Checkout & shipping</h3>
+      <div class="form-row">
+        <div class="form-field"><label><input type="checkbox" id="ss-cod-enabled" ${s.cod_enabled ? 'checked' : ''} /> Cash on Delivery (COD) enabled</label></div>
+        <div class="form-field"><label>COD extra charge (₹)</label><input id="ss-cod-charge" type="number" min="0" step="0.01" value="${s.cod_extra_charge_paise ? (s.cod_extra_charge_paise / 100).toFixed(2) : '0'}" /></div>
+      </div>
+      <div class="form-field"><label>Free shipping threshold (₹) <span style="font-weight:400;color:var(--moss-700);">(0 disables free shipping)</span></label><input id="ss-free-shipping" type="number" min="0" step="1" value="${s.free_shipping_threshold_paise ? (s.free_shipping_threshold_paise / 100).toFixed(0) : '0'}" /></div>
+      <div class="form-field"><label>Blocked pincodes (comma-separated, optional)</label><input id="ss-blocked-pincodes" value="${(s.blocked_pincodes || []).join(', ')}" /></div>
+      <div class="form-field"><label>Low-stock alert threshold (units)</label><input id="ss-low-stock" type="number" min="0" value="${s.low_stock_threshold != null ? s.low_stock_threshold : 10}" /></div>
+    </div>
+    <div class="card">
+      <h3 class="mt-0">Groove Points loyalty</h3>
+      <div class="form-field"><label><input type="checkbox" id="ss-loyalty-enabled" ${s.loyalty_points_enabled ? 'checked' : ''} /> Enabled</label></div>
+      <div class="form-row">
+        <div class="form-field"><label>₹ spent per point earned</label><input id="ss-loyalty-earn" type="number" min="1" value="${s.loyalty_earn_rate_paise_per_point ? (s.loyalty_earn_rate_paise_per_point / 100).toFixed(0) : '100'}" /></div>
+        <div class="form-field"><label>₹ value per point redeemed</label><input id="ss-loyalty-redeem" type="number" min="0.01" step="0.01" value="${s.loyalty_redeem_value_paise_per_point ? (s.loyalty_redeem_value_paise_per_point / 100).toFixed(2) : '1'}" /></div>
+      </div>
+      <div class="form-field"><label>Max % of an order points can cover</label><input id="ss-loyalty-cap" type="number" min="0" max="100" value="${s.loyalty_redeem_cap_percent != null ? s.loyalty_redeem_cap_percent : 50}" /></div>
+    </div>
+    <button class="btn btn--primary" id="ss-save">Save Settings</button>
+    <span class="form-error" id="ss-saved" style="display:none;color:var(--moss-700);">Saved.</span>
+  `;
+
+  document.getElementById('ss-save').addEventListener('click', async () => {
+    const blocked = document
+      .getElementById('ss-blocked-pincodes')
+      .value.split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    await api('/api/content/store_settings', {
+      method: 'PATCH',
+      body: {
+        business_legal_name: document.getElementById('ss-legal-name').value,
+        gstin: document.getElementById('ss-gstin').value,
+        business_address: document.getElementById('ss-address').value,
+        support_email: document.getElementById('ss-support-email').value,
+        support_phone: document.getElementById('ss-support-phone').value,
+        charge_gst: true,
+        cod_enabled: document.getElementById('ss-cod-enabled').checked,
+        cod_extra_charge_paise: Math.round((parseFloat(document.getElementById('ss-cod-charge').value) || 0) * 100),
+        free_shipping_threshold_paise: Math.round((parseFloat(document.getElementById('ss-free-shipping').value) || 0) * 100),
+        blocked_pincodes: blocked,
+        low_stock_threshold: parseInt(document.getElementById('ss-low-stock').value, 10) || 0,
+        loyalty_points_enabled: document.getElementById('ss-loyalty-enabled').checked,
+        loyalty_earn_rate_paise_per_point: Math.round((parseFloat(document.getElementById('ss-loyalty-earn').value) || 100) * 100),
+        loyalty_redeem_value_paise_per_point: Math.round((parseFloat(document.getElementById('ss-loyalty-redeem').value) || 1) * 100),
+        loyalty_redeem_cap_percent: parseInt(document.getElementById('ss-loyalty-cap').value, 10) || 0,
+      },
+    });
+    const saved = document.getElementById('ss-saved');
+    saved.style.display = 'inline';
+    setTimeout(() => (saved.style.display = 'none'), 2000);
+  });
+}
+
+async function renderCouponsTab() {
+  const wrap = document.getElementById('tab-content');
+  wrap.innerHTML = '<p>Loading coupons…</p>';
+  const { coupons } = await api('/api/coupons');
+
+  wrap.innerHTML = `
+    <div class="card" style="margin-bottom:24px;">
+      <h3 class="mt-0">Add a coupon</h3>
+      <div class="form-row">
+        <div class="form-field"><label>Code</label><input id="cp-code" placeholder="e.g. GROOVE20" /></div>
+        <div class="form-field">
+          <label>Type</label>
+          <select id="cp-type"><option value="percent">Percent off</option><option value="flat">Flat amount off</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>Value <span style="font-weight:400;color:var(--moss-700);">(percent, or ₹ for flat)</span></label><input id="cp-value" type="number" min="0" step="0.01" /></div>
+        <div class="form-field"><label>Max discount (₹, optional — percent only)</label><input id="cp-max" type="number" min="0" step="0.01" /></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>Minimum order (₹, optional)</label><input id="cp-min" type="number" min="0" step="0.01" /></div>
+        <div class="form-field"><label>Usage limit (optional)</label><input id="cp-limit" type="number" min="1" /></div>
+      </div>
+      <button class="btn btn--primary" id="cp-add">Add Coupon</button>
+      <p class="form-error" id="cp-error" style="display:none;"></p>
+    </div>
+    <div class="card">
+      <table class="data-table">
+        <thead><tr><th>Code</th><th>Discount</th><th>Min order</th><th>Used</th><th>Active</th><th></th></tr></thead>
+        <tbody>
+          ${coupons
+            .map(
+              (c) => `
+            <tr data-id="${c.id}">
+              <td class="mono">${c.code}</td>
+              <td>${c.discount_type === 'percent' ? `${c.discount_value}%${c.max_discount_paise ? ` (max ${formatRupees(c.max_discount_paise)})` : ''}` : formatRupees(c.discount_value)}</td>
+              <td class="mono">${c.min_order_paise ? formatRupees(c.min_order_paise) : '—'}</td>
+              <td class="mono">${c.times_used}${c.usage_limit ? ` / ${c.usage_limit}` : ''}</td>
+              <td><input type="checkbox" data-cp-active="${c.id}" ${c.is_active ? 'checked' : ''} /></td>
+              <td><button class="btn btn--outline btn--sm" data-cp-delete="${c.id}">Delete</button></td>
+            </tr>`
+            )
+            .join('') || '<tr><td colspan="6" style="color:var(--moss-700);">No coupons yet.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  document.getElementById('cp-add').addEventListener('click', async () => {
+    const errorEl = document.getElementById('cp-error');
+    errorEl.style.display = 'none';
+    const code = document.getElementById('cp-code').value.trim();
+    const value = parseFloat(document.getElementById('cp-value').value);
+    if (!code || !value) {
+      errorEl.textContent = 'Code and value are required.';
+      errorEl.style.display = 'block';
+      return;
+    }
+    const type = document.getElementById('cp-type').value;
+    const maxRaw = document.getElementById('cp-max').value.trim();
+    const minRaw = document.getElementById('cp-min').value.trim();
+    const limitRaw = document.getElementById('cp-limit').value.trim();
+    try {
+      await api('/api/coupons', {
+        method: 'POST',
+        body: {
+          code,
+          discount_type: type,
+          discount_value: type === 'flat' ? Math.round(value * 100) : value,
+          max_discount_paise: maxRaw ? Math.round(parseFloat(maxRaw) * 100) : null,
+          min_order_paise: minRaw ? Math.round(parseFloat(minRaw) * 100) : 0,
+          usage_limit: limitRaw ? parseInt(limitRaw, 10) : null,
+          is_active: true,
+        },
+      });
+      renderCouponsTab();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.style.display = 'block';
+    }
+  });
+  wrap.querySelectorAll('[data-cp-active]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      await api(`/api/coupons/${input.getAttribute('data-cp-active')}`, { method: 'PATCH', body: { is_active: input.checked } });
+    });
+  });
+  wrap.querySelectorAll('[data-cp-delete]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this coupon?')) return;
+      await api(`/api/coupons/${btn.getAttribute('data-cp-delete')}`, { method: 'DELETE' });
+      renderCouponsTab();
+    });
+  });
+}
+
+async function renderShippingRatesTab() {
+  const wrap = document.getElementById('tab-content');
+  wrap.innerHTML = '<p>Loading shipping rates…</p>';
+  const { slabs } = await api('/api/shipping/rate-slabs', { auth: false });
+
+  wrap.innerHTML = `
+    <div class="card" style="margin-bottom:24px;">
+      <p style="font-size:0.85rem;color:var(--moss-700);">
+        Rows are matched in ascending order by chargeable weight — the first row whose "up to" weight is not exceeded (or the row left blank = "anything heavier") sets the shipping price.
+        Chargeable weight is the greater of a product's actual weight and its volumetric weight (L × W × H ÷ 5000), pooled across every item in the order that doesn't have its own flat shipping override.
+      </p>
+      <table class="data-table">
+        <thead><tr><th>Up to weight (grams, blank = catch-all)</th><th>Price (₹)</th><th></th></tr></thead>
+        <tbody>
+          ${slabs
+            .map(
+              (s) => `
+            <tr data-id="${s.id}">
+              <td><input type="number" min="0" data-slab-weight="${s.id}" value="${s.max_weight_grams != null ? s.max_weight_grams : ''}" placeholder="catch-all" style="width:120px;padding:6px;border-radius:6px;border:1px solid var(--sand-300);" /></td>
+              <td><input type="number" min="0" step="0.01" data-slab-price="${s.id}" value="${(s.price_paise / 100).toFixed(2)}" style="width:100px;padding:6px;border-radius:6px;border:1px solid var(--sand-300);" /></td>
+              <td><button class="btn btn--outline btn--sm" data-slab-save="${s.id}">Save</button> <button class="btn btn--outline btn--sm" data-slab-delete="${s.id}">Delete</button></td>
+            </tr>`
+            )
+            .join('') || '<tr><td colspan="3" style="color:var(--moss-700);">No rate slabs yet — add one below.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3 class="mt-0">Add a rate</h3>
+      <div class="form-row">
+        <div class="form-field"><label>Up to weight (grams, leave blank for catch-all)</label><input id="sl-weight" type="number" min="0" /></div>
+        <div class="form-field"><label>Price (₹)</label><input id="sl-price" type="number" min="0" step="0.01" /></div>
+      </div>
+      <button class="btn btn--primary" id="sl-add">Add Rate</button>
+      <p class="form-error" id="sl-error" style="display:none;"></p>
+    </div>
+  `;
+
+  wrap.querySelectorAll('[data-slab-save]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-slab-save');
+      const weightRaw = wrap.querySelector(`[data-slab-weight="${id}"]`).value.trim();
+      const priceRaw = wrap.querySelector(`[data-slab-price="${id}"]`).value.trim();
+      await api(`/api/shipping/rate-slabs/${id}`, {
+        method: 'PATCH',
+        body: { max_weight_grams: weightRaw === '' ? null : parseInt(weightRaw, 10), price_paise: Math.round((parseFloat(priceRaw) || 0) * 100) },
+      });
+      btn.textContent = 'Saved';
+      setTimeout(() => (btn.textContent = 'Save'), 1500);
+    });
+  });
+  wrap.querySelectorAll('[data-slab-delete]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this rate?')) return;
+      await api(`/api/shipping/rate-slabs/${btn.getAttribute('data-slab-delete')}`, { method: 'DELETE' });
+      renderShippingRatesTab();
+    });
+  });
+  document.getElementById('sl-add').addEventListener('click', async () => {
+    const errorEl = document.getElementById('sl-error');
+    errorEl.style.display = 'none';
+    const weightRaw = document.getElementById('sl-weight').value.trim();
+    const priceRaw = document.getElementById('sl-price').value.trim();
+    if (!priceRaw) {
+      errorEl.textContent = 'Price is required.';
+      errorEl.style.display = 'block';
+      return;
+    }
+    await api('/api/shipping/rate-slabs', {
+      method: 'POST',
+      body: { max_weight_grams: weightRaw === '' ? null : parseInt(weightRaw, 10), price_paise: Math.round(parseFloat(priceRaw) * 100) },
+    });
+    renderShippingRatesTab();
+  });
 }
 
 const TAB_RENDERERS = {
@@ -776,6 +1219,10 @@ const TAB_RENDERERS = {
   orders: renderOrdersTab,
   banners: renderBannersTab,
   content: renderContentTab,
+  legal: renderLegalTab,
+  coupons: renderCouponsTab,
+  shipping: renderShippingRatesTab,
+  settings: renderStoreSettingsTab,
   reports: renderReportsTab,
 };
 

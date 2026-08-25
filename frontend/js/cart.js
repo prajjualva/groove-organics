@@ -41,6 +41,10 @@ function addToCart(product, quantity = 1, variant = null) {
       // into a real discount.
       gst_rate_percent: product.gst_rate_percent != null ? product.gst_rate_percent : null,
       shipping_charge_paise: product.shipping_charge_paise || 0,
+      // Weight (falls back to the parent product's weight if the variant
+      // doesn't have its own) — used only for a pre-checkout shipping
+      // estimate; the backend always recalculates the real amount.
+      weight_grams: (variant && variant.weight_grams != null ? variant.weight_grams : null) ?? product.weight_grams ?? 0,
       quantity,
     });
   }
@@ -71,23 +75,64 @@ function cartSubtotalPaise() {
   return getCart().reduce((sum, i) => sum + i.unit_price_paise * i.quantity, 0);
 }
 
-// Pre-checkout estimate — mirrors the backend's per-product GST rate /
-// shipping charge math (see dataStore.js's priceOrderItems) so what the
-// shopper sees on the cart/checkout page matches what they're actually
-// charged. `defaultGstRatePercent` comes from GET /api/status for any item
-// that doesn't carry its own rate (e.g. products added to the cart before
-// this feature shipped).
-function cartEstimate(defaultGstRatePercent = 5) {
+// Pre-checkout estimate — mirrors the backend's GST-inclusive pricing +
+// weight-based shipping + coupon math (see dataStore.js's priceOrderItems /
+// createOrder) so what the shopper sees on the cart/checkout page is close
+// to what they're actually charged. The backend always recalculates the
+// authoritative numbers itself when the order is created — this is only
+// ever a preview. `defaultGstRatePercent` comes from GET /api/status for
+// any item that doesn't carry its own rate. `couponCode` and
+// `paymentMethod` ('cod' | 'online') are optional.
+async function cartEstimate(defaultGstRatePercent = 5, { couponCode = null, paymentMethod = 'online' } = {}) {
   const items = getCart();
-  let subtotal = 0;
+  let inclusiveGoods = 0; // sum of what the customer pays for products, GST included
+  let base = 0; // GST-inclusive price with tax extracted out
   let gst = 0;
-  let shipping = 0;
+  let manualShipping = 0;
+  let pooledGrams = 0;
   items.forEach((i) => {
-    const lineSubtotal = i.unit_price_paise * i.quantity;
+    const lineInclusive = i.unit_price_paise * i.quantity;
     const rate = i.gst_rate_percent != null ? i.gst_rate_percent : defaultGstRatePercent;
-    subtotal += lineSubtotal;
-    gst += Math.round((lineSubtotal * rate) / 100);
-    shipping += (i.shipping_charge_paise || 0) * i.quantity;
+    const lineBase = Math.round((lineInclusive * 100) / (100 + rate));
+    inclusiveGoods += lineInclusive;
+    base += lineBase;
+    gst += lineInclusive - lineBase;
+    if (i.shipping_charge_paise) {
+      manualShipping += i.shipping_charge_paise * i.quantity;
+    } else if (i.weight_grams) {
+      pooledGrams += i.weight_grams * i.quantity;
+    }
   });
-  return { subtotal, gst, shipping, total: subtotal + gst + shipping };
+
+  let settings = {};
+  let weightShipping = 0;
+  let discount = 0;
+  let couponError = null;
+  try {
+    const [settingsRes, shippingRes, couponRes] = await Promise.all([
+      api('/api/content', { auth: false }).then((r) => r.content.store_settings || {}),
+      pooledGrams > 0
+        ? api('/api/shipping/estimate', { method: 'POST', auth: false, body: { totalGrams: pooledGrams } }).then((r) => r.pricePaise || 0)
+        : Promise.resolve(0),
+      couponCode
+        ? api('/api/coupons/validate', { method: 'POST', auth: false, body: { code: couponCode, goodsPaise: inclusiveGoods } })
+        : Promise.resolve(null),
+    ]);
+    settings = settingsRes;
+    weightShipping = shippingRes;
+    if (couponRes) {
+      if (couponRes.valid) discount = couponRes.discountPaise;
+      else couponError = couponRes.reason;
+    }
+  } catch {
+    // Estimate-only — if any of these calls fail, fall back to zero for that part.
+  }
+
+  let shipping = manualShipping + weightShipping;
+  if (paymentMethod === 'cod') shipping += Number(settings.cod_extra_charge_paise) || 0;
+  const threshold = settings.free_shipping_threshold_paise;
+  if (threshold != null && threshold > 0 && inclusiveGoods - discount >= threshold) shipping = 0;
+
+  const total = base + gst + shipping - discount;
+  return { subtotal: base, gst, shipping, discount, couponError, total };
 }

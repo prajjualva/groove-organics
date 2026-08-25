@@ -76,9 +76,35 @@ create table if not exists public.products (
   -- category in India (e.g. 5% / 12% / 18%). Leave null to use the store's
   -- default rate (GST_RATE_PERCENT in backend/.env, 5% out of the box).
   gst_rate_percent numeric(4,1),
-  -- Extra shipping charge for this item, added per unit ordered (e.g. a
-  -- heavier product costs more to ship). 0 = no extra charge for this item.
+  -- Manual flat shipping override, added per unit ordered. Leave at 0 and
+  -- fill in weight/dimensions below to have shipping calculated
+  -- automatically from the rate table instead; set this to a non-zero
+  -- value to bypass that calculation entirely for this one product.
   shipping_charge_paise integer not null default 0,
+  -- Actual weight and package dimensions — used to calculate shipping
+  -- automatically (chargeable weight = greater of actual weight and
+  -- volumetric weight, matched against shipping_rate_slabs). All optional;
+  -- a product with none of these set and no shipping_charge_paise override
+  -- just ships free.
+  weight_grams integer,
+  length_cm numeric(6,1),
+  width_cm numeric(6,1),
+  height_cm numeric(6,1),
+  -- Admin-set promotional tags shown as badges on the product card and used
+  -- to group products onto the /deals page (e.g. "Sale Live", "New Deal",
+  -- "Festive Offer"). A product can carry more than one at once, so this is
+  -- a jsonb array of preset strings (see PROMO_TAG_OPTIONS in the backend) —
+  -- '[]' = no tags. A product with multiple tags appears in every matching
+  -- section of /deals.
+  promo_tags jsonb not null default '[]'::jsonb,
+  -- HSN (Harmonized System of Nomenclature) code, shown next to the GST%
+  -- on invoices — required for GST-compliant invoicing in India.
+  hsn_code text,
+  -- SEO: optional per-product overrides for the browser tab title and
+  -- search-result snippet. Falls back to the product name/short_description
+  -- when left blank.
+  seo_title text,
+  seo_meta_description text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -104,6 +130,11 @@ create table if not exists public.orders (
   payment_order_id text,
   payment_id text,
   notify_me boolean default false,
+  -- Manual carrier tracking, filled in by staff when marking an order
+  -- Shipped — no live courier API integration in this phase.
+  tracking_number text,
+  tracking_url text,
+  courier_name text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -331,6 +362,9 @@ create table if not exists public.product_variants (
   stock integer not null default 0,
   sku text,
   image_url text,                   -- optional: a different photo per color/variant
+  -- Own weight for shipping (a 1L bottle ships heavier than a 200ml one).
+  -- Falls back to the parent product's weight_grams if left blank.
+  weight_grams integer,
   sort_order integer default 0,
   created_at timestamptz not null default now()
 );
@@ -371,6 +405,92 @@ create policy "variants_public_read" on public.product_variants
 
 drop policy if exists "variants_admin_write" on public.product_variants;
 create policy "variants_admin_write" on public.product_variants
+  for all using (public.current_role() = 'admin') with check (public.current_role() = 'admin');
+
+-- =====================================================================
+-- Weight-based shipping rate slabs — admin-managed table of
+-- "up to this chargeable weight -> this price" rows, used to auto-calculate
+-- shipping for any product that has weight/dimensions set but no manual
+-- shipping_charge_paise override. Rows are matched in ascending
+-- max_weight_grams order; a row with max_weight_grams = null means
+-- "anything heavier than every other slab" (the catch-all top slab).
+-- =====================================================================
+create table if not exists public.shipping_rate_slabs (
+  id uuid primary key default gen_random_uuid(),
+  max_weight_grams integer,       -- null = catch-all (no upper bound)
+  price_paise integer not null,
+  sort_order integer default 0,
+  created_at timestamptz not null default now()
+);
+
+alter table public.shipping_rate_slabs enable row level security;
+
+drop policy if exists "shipping_rate_slabs_public_read" on public.shipping_rate_slabs;
+create policy "shipping_rate_slabs_public_read" on public.shipping_rate_slabs
+  for select using (true);
+
+drop policy if exists "shipping_rate_slabs_admin_write" on public.shipping_rate_slabs;
+create policy "shipping_rate_slabs_admin_write" on public.shipping_rate_slabs
+  for all using (public.current_role() = 'admin') with check (public.current_role() = 'admin');
+
+-- =====================================================================
+-- Coupon / promo codes
+-- =====================================================================
+create table if not exists public.coupons (
+  id uuid primary key default gen_random_uuid(),
+  code text unique not null,                 -- stored upper-cased, e.g. "SAVE20"
+  discount_type text not null check (discount_type in ('percent', 'flat')),
+  discount_value numeric not null,           -- percent (0-100) or a flat amount in paise, per discount_type
+  min_order_paise integer default 0,
+  max_discount_paise integer,                -- optional cap for percent discounts
+  usage_limit integer,                       -- optional total redemption cap; null = unlimited
+  times_used integer not null default 0,
+  is_active boolean not null default true,
+  expires_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+alter table public.coupons enable row level security;
+
+-- Coupons aren't publicly listable (that would let anyone browse every code)
+-- — validation happens through the backend's /api/coupons/validate route
+-- using the service role, not a direct client-side select.
+drop policy if exists "coupons_admin_all" on public.coupons;
+create policy "coupons_admin_all" on public.coupons
+  for all using (public.current_role() = 'admin') with check (public.current_role() = 'admin');
+
+-- Coupon applied to an order (if any) — kept on the order itself so the
+-- invoice and admin order view can show what discount was used.
+alter table public.orders add column if not exists coupon_code text;
+alter table public.orders add column if not exists discount_paise integer not null default 0;
+
+-- =====================================================================
+-- Groove Points loyalty ledger — one row per earn/redeem event. A
+-- customer's balance is the sum of points_delta across their rows, rather
+-- than a running-balance column, so the full history is always auditable.
+-- Rates (₹ per point earned/redeemed) and the redemption cap live in
+-- site_content's "store_settings" key, not here, so they're admin-editable
+-- without a migration.
+-- =====================================================================
+create table if not exists public.loyalty_ledger (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id),
+  order_id uuid references public.orders(id),
+  points_delta integer not null,             -- positive = earned, negative = redeemed
+  reason text not null,                      -- 'order_earned' | 'order_redeemed' | 'manual_adjustment'
+  created_at timestamptz not null default now()
+);
+
+alter table public.loyalty_ledger enable row level security;
+
+drop policy if exists "loyalty_ledger_owner_or_admin_select" on public.loyalty_ledger;
+create policy "loyalty_ledger_owner_or_admin_select" on public.loyalty_ledger
+  for select using (user_id = auth.uid() or public.current_role() = 'admin');
+
+-- Writes only ever happen server-side (service role, on paid orders / admin
+-- adjustments) — no direct client insert/update policy on purpose.
+drop policy if exists "loyalty_ledger_admin_write" on public.loyalty_ledger;
+create policy "loyalty_ledger_admin_write" on public.loyalty_ledger
   for all using (public.current_role() = 'admin') with check (public.current_role() = 'admin');
 
 -- =====================================================================

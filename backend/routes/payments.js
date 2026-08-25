@@ -32,6 +32,10 @@ router.post('/create-order', async (req, res, next) => {
       currency: 'INR',
       receipt: order.order_number,
     });
+    // Save the gateway's order id against ours right away — if the browser
+    // closes right after a successful payment (before /confirm fires), the
+    // webhook below can still find and pay this order using this id.
+    await store.attachPaymentOrderId(order.id, rpOrder.id);
     res.json({
       mode: 'live',
       keyId: razorpay.keyId,
@@ -81,7 +85,14 @@ router.post('/confirm', async (req, res, next) => {
 });
 
 // POST /api/payments/webhook — Razorpay server-to-server payment status updates.
-// Configure this URL in the Razorpay dashboard once the site is deployed.
+// This is the fix for the "browser closes right after payment succeeds"
+// gap: /api/payments/confirm relies on the customer's browser calling us
+// back, which can fail to happen even though Razorpay charged them
+// successfully. This webhook is Razorpay telling us directly, independent
+// of the browser, so the order still gets marked paid.
+// Configure this URL (https://yourdomain.com/api/payments/webhook) and a
+// webhook secret in the Razorpay dashboard once the site is deployed, and
+// set RAZORPAY_WEBHOOK_SECRET in backend/.env to the same value.
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
   if (!secret) return res.status(200).json({ ok: true, note: 'Webhook secret not configured yet.' });
@@ -90,8 +101,29 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
   const expected = crypto.createHmac('sha256', secret).update(req.body).digest('hex');
   if (signature !== expected) return res.status(400).json({ error: 'Invalid webhook signature.' });
 
-  // Real handling (update order by payment_order_id) can be filled in once
-  // this is wired to a live Razorpay account and real webhook events arrive.
+  try {
+    const event = JSON.parse(req.body.toString('utf8'));
+    const payment = event?.payload?.payment?.entity;
+    if (
+      payment &&
+      (event.event === 'payment.captured' || event.event === 'order.paid') &&
+      payment.order_id
+    ) {
+      const order = await store.getOrderByPaymentOrderId(payment.order_id);
+      if (order && order.payment_status !== 'paid') {
+        await store.markOrderPaid(order.id, {
+          paymentGateway: 'razorpay',
+          paymentOrderId: payment.order_id,
+          paymentId: payment.id,
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Razorpay webhook processing error:', err);
+    // Still acknowledge with 200 so Razorpay doesn't hammer retries for a
+    // parsing bug on our end — the payment itself already succeeded.
+  }
+
   res.status(200).json({ ok: true });
 });
 

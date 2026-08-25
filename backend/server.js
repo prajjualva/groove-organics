@@ -15,6 +15,9 @@ const reviewRoutes = require('./routes/reviews');
 const categoryRoutes = require('./routes/categories');
 const contentRoutes = require('./routes/content');
 const variantRoutes = require('./routes/variants');
+const couponRoutes = require('./routes/coupons');
+const shippingRoutes = require('./routes/shipping');
+const loyaltyRoutes = require('./routes/loyalty');
 const { isConfigured: supabaseConfigured } = require('./lib/supabase');
 const { isConfigured: razorpayConfigured } = require('./lib/razorpay');
 
@@ -37,6 +40,36 @@ app.use('/api', reviewRoutes); // /api/products/:slug/reviews, /api/reviews/:id
 app.use('/api/categories', categoryRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api', variantRoutes); // /api/products/:productId/variants, /api/variants/:id
+app.use('/api/coupons', couponRoutes);
+app.use('/api/shipping', shippingRoutes);
+app.use('/api/loyalty', loyaltyRoutes);
+
+// --- SEO: sitemap.xml + robots.txt, generated from the current catalog ---
+app.get('/sitemap.xml', async (req, res, next) => {
+  try {
+    const store = require('./lib/dataStore');
+    const products = await store.listProducts({ includeInactive: false });
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const staticPaths = ['/', '/shop', '/deals', '/about', '/contact', '/terms', '/privacy', '/refund-policy', '/shipping-policy'];
+    const urls = [
+      ...staticPaths.map((p) => `${origin}${p}`),
+      ...products.map((p) => `${origin}/product?slug=${encodeURIComponent(p.slug)}`),
+    ];
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
+      .map((u) => `  <url><loc>${u}</loc></url>`)
+      .join('\n')}\n</urlset>`;
+    res.setHeader('Content-Type', 'application/xml');
+    res.send(xml);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/robots.txt', (req, res) => {
+  const origin = `${req.protocol}://${req.get('host')}`;
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /staff\nDisallow: /account\nSitemap: ${origin}/sitemap.xml\n`);
+});
 
 app.get('/api/status', (req, res) => {
   res.json({
@@ -70,6 +103,11 @@ const pageRoutes = {
   '/order-confirmation': 'order-confirmation.html',
   '/about': 'about.html',
   '/contact': 'contact.html',
+  '/deals': 'deals.html',
+  '/terms': 'legal.html',
+  '/privacy': 'legal.html',
+  '/refund-policy': 'legal.html',
+  '/shipping-policy': 'legal.html',
   '/admin': 'admin/index.html',
   '/admin/dashboard': 'admin/dashboard.html',
   '/staff': 'staff/index.html',

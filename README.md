@@ -50,26 +50,54 @@ database and real payments automatically. Full walkthrough: **[docs/setup-guide.
 
 ## What's built vs. what's next
 
+This is the "master Phase-1 spec" build — the 18 locked decisions we finalized (GST-inclusive pricing,
+weight-based shipping, coupons, COD, promo tags/deals page, loyalty points, legal pages, and more) are
+now implemented end to end: database schema, backend logic, and the admin/storefront UI to operate them
+without touching code.
+
 Built so far (franchise logins still deferred to a later phase):
-- Storefront: hero image slider (admin-managed, rotates through highlighted-product photos), shop with
-  category → subcategory filtering, product pages with size/color variant pickers, cart, checkout, GST
-  calculation, PDF invoices
+- Storefront: hero image slider (admin-managed), shop with category → subcategory filtering, product
+  pages with size/color variant pickers, cart, checkout, PDF invoices, a **Deals page** (`/deals`) that
+  auto-groups tagged products by tag, and four editable **legal pages** (Terms, Privacy, Refund Policy,
+  Shipping Policy)
+- **GST-inclusive pricing**: the price you type in Admin is exactly what the customer pays — GST is
+  shown as a breakup (extracted from that price), never added on top. Matches how Indian retail pricing
+  actually works ("₹525, inclusive of all taxes").
+- **Weight-based shipping**: give a product its weight + dimensions (Admin → Products → "Sale, Shipping
+  & Tags") and shipping is calculated automatically from an editable rate table (Admin → Shipping
+  Rates) using chargeable weight (greater of actual vs. volumetric). A flat per-product "Extra shipping"
+  override still works for products that need it instead.
+- **Coupon codes**: create percent/flat codes with min-order, max-discount, and usage-limit rules
+  (Admin → Coupons); shoppers apply them at checkout; validated and redeemed server-side.
+- **Cash on Delivery**: toggle on/off and set an optional COD surcharge (Admin → Store Settings);
+  shoppers choose Pay Online vs. COD at checkout; staff mark COD orders paid from the Orders tab.
+- **Free shipping threshold** and **blocked pincodes**, both admin-editable (Admin → Store Settings).
+- **Promo tags / deal badges**: pick any combination of preset badges (Sale Live, New Deal, Best Seller,
+  Festive Offer, Limited Stock, Bundle Deal) per product — they show on the product card and
+  automatically group the product onto `/deals`.
+- **Groove Points loyalty**: customers earn points on every paid order (rate admin-editable) and can
+  redeem them for a discount at checkout (capped at a configurable % of the order); balance + history
+  visible on their account dashboard.
+- **Order tracking**: staff add a tracking number/link when marking an order Shipped; customers see a
+  "Track Package" button on their confirmation page.
+- **Order emails**: confirmation and shipped emails via Resend (`backend/lib/email.js`) — logs to the
+  console instead of sending until `RESEND_API_KEY`/`RESEND_FROM_EMAIL` are set in `backend/.env`.
+- **Razorpay webhook**: a signature-verified `/api/payments/webhook` marks orders paid independently of
+  the shopper's browser, closing the "browser closed right after paying" gap.
+- **Verified-purchaser reviews**: only customers with a paid/delivered order containing the product can
+  review it.
+- **SEO**: `/sitemap.xml` and `/robots.txt` generated from the live catalog; optional per-product SEO
+  title/meta description (Admin → Products → "Sale, Shipping & Tags").
 - Real product photo uploads from the admin dashboard (no more placeholder icons once you upload one)
-- Customer accounts: register/login, order history, saved addresses, wishlist, product reviews & ratings
-- Admin dashboard: Products (image upload, category, stock, variants, **per-product GST rate and
-  shipping charge** — see below), Categories (parent + subcategory tree), Orders (view/update status),
-  Banners (hero slider slides + festive-offer/promo cards + a sitewide announcement strip — one flexible
-  tool for all of it), **Homepage Content** (edit every word of the hero, feature strip, story and
-  process sections without touching code), basic sales report
-- **Per-product GST + shipping**: each product can be given its own GST rate (leave blank to use the
-  store-wide default in `backend/.env`) and its own extra shipping charge per unit — real GST rates in
-  India vary by product category (5% / 12% / 18%...), and some products genuinely cost more to ship. Set
-  these in Admin → Products, right next to Stock. The backend looks up each product's actual rate/charge
-  at checkout (never trusts what the shopper's cart says), so the invoice and order total are always
-  correct even if someone tampers with the page.
-- Staff dashboard: order status updates only
-- Order tracking pipeline: Placed → Packed → Shipped → Delivered (a plain status field today — see
-  "Worth doing next" below for adding real carrier tracking numbers/links)
+- Customer accounts: register/login, order history, saved addresses, wishlist, reviews & ratings, Groove
+  Points balance
+- Admin dashboard tabs: Products (image, category, stock, variants, GST rate, shipping, sale price,
+  weight/dimensions, HSN code, promo tags, SEO), Categories, Orders (status + tracking + Mark COD Paid),
+  Banners, Homepage Content, **Legal Pages**, **Coupons**, **Shipping Rates**, **Store Settings**
+  (business/GST details, COD, free shipping, loyalty rates, low-stock threshold, blocked pincodes), and
+  an expanded **Reports** dashboard (today's sales/orders, monthly revenue, pending orders, low-stock
+  list, best-sellers, coupon usage)
+- Staff dashboard: order status + tracking updates
 - Razorpay integration code (works in demo mode now, switches to real charges once you add keys)
 - Supabase schema with row-level security so customers only ever see their own orders/addresses/wishlist
 - Product-card hover animation (subtle 3D tilt + image zoom) — skipped automatically for anyone with
@@ -78,10 +106,14 @@ Built so far (franchise logins still deferred to a later phase):
 Worth doing before real customers use this:
 - A developer security review of the auth/payment code (recommended in our original plan)
 - Photograph and upload real product images for every SKU from the admin Products tab
-- Add more homepage-hero and festive-offer banners from the admin Banners tab as you get real photos —
-  right now there's one seed image repeated in both spots
-- Carrier shipment tracking (a tracking number + carrier link per order, and a "Shipped" email with that
-  link) — the order-status pipeline above is ready for this to slot into next
-- Deciding on shipping-cost rules (currently ₹0 shipping, easy to change in `backend/routes/orders.js`)
+- Add more homepage-hero and festive-offer banners from the admin Banners tab as you get real photos
 - Product stock isn't yet auto-decremented when an order is placed — worth adding before relying on the
   stock numbers for real inventory decisions
+- Google Search Console / Analytics: create your own Google account and verify the site (uses the
+  `/sitemap.xml` this build already generates) — a developer can't do this step for you, it has to be
+  tied to your own Google account
+- Courier API integration (Delhivery/Shiprocket) for live tracking numbers instead of the current
+  manual tracking-number entry — explicitly a later phase per our locked spec
+- Legal page text is placeholder — have it reviewed by a professional before going live
+- This was all built and syntax-checked in a sandbox with no npm registry access, so `npm install` and a
+  real click-through on your machine is still the first real test — tell me what breaks and I'll fix it
