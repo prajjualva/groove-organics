@@ -5,10 +5,13 @@
 // with a little cursor parallax on top.
 //
 // This is a stylized, atmospheric interpretation — not an attempt at
-// photorealism. Everything is built from primitive geometry plus small
-// canvas-generated textures (wood grain, stone speckle, a soft glow), so
-// there are no external model/texture files to fetch or fail to load —
-// important since this app has no build step and nothing to bundle.
+// photorealism (no external 3D model files, no lighting bake, nothing to
+// fetch or fail to load — this app has no build step and nothing to
+// bundle). Within that constraint this file leans as far as primitive
+// geometry + canvas-generated textures reasonably can toward "handcrafted
+// object, not a CGI primitive": jittered/irregular geometry instead of
+// perfect spheres, a tapered volumetric oil stream instead of a uniform
+// tube, and the site's real logo composited onto the bottle label.
 //
 // Progressive enhancement: index.html always ships the plain icon+copy
 // section (#process-fallback) already visible by default. This script only
@@ -43,7 +46,9 @@
   }
 
   // ---------------------------------------------------------------------
-  // Small procedural texture helpers — no image files needed.
+  // Small procedural texture helpers — no image files needed (except the
+  // bottle label, which composites the site's own real logo — see
+  // buildLabelTexture below).
   // ---------------------------------------------------------------------
   function canvasTexture(draw, size) {
     const c = document.createElement('canvas');
@@ -54,6 +59,27 @@
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
     return tex;
+  }
+
+  // Nudges every vertex of an origin-centered geometry slightly inward or
+  // outward along its own radial direction, at random. Turns a perfect
+  // primitive (sphere, cylinder) into something that reads as hand-shaped
+  // rather than a flawless CGI solid. Small amounts only — this is meant
+  // to read as "handmade", not "damaged".
+  function jitterGeometry(geo, amount, seedFn) {
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      const len = Math.sqrt(x * x + y * y + z * z) || 1;
+      const rnd = seedFn ? seedFn(i) : Math.random();
+      const d = (rnd - 0.5) * amount;
+      pos.setXYZ(i, x + (x / len) * d, y + (y / len) * d, z + (z / len) * d);
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    return geo;
   }
 
   function woodTexture(base, grain) {
@@ -83,6 +109,38 @@
     }, 256);
   }
 
+  // Vertical-plank "barrel stave" texture for the round press drum — reads
+  // as a coopered wooden vessel instead of a smooth lathed cylinder.
+  function barrelTexture() {
+    return canvasTexture((ctx, s) => {
+      const planks = 16;
+      const w = s / planks;
+      for (let i = 0; i < planks; i++) {
+        const tone = 92 + Math.floor(Math.random() * 22); // 92-114
+        ctx.fillStyle = `rgb(${tone},${Math.round(tone * 0.62)},${Math.round(tone * 0.34)})`;
+        ctx.fillRect(i * w, 0, w, s);
+        // seam shadow/highlight on each plank edge
+        const seam = ctx.createLinearGradient(i * w, 0, i * w + w, 0);
+        seam.addColorStop(0, 'rgba(0,0,0,0.28)');
+        seam.addColorStop(0.15, 'rgba(0,0,0,0)');
+        seam.addColorStop(0.85, 'rgba(255,255,255,0.05)');
+        seam.addColorStop(1, 'rgba(0,0,0,0.28)');
+        ctx.fillStyle = seam;
+        ctx.fillRect(i * w, 0, w, s);
+        // a couple of faint horizontal grain flecks per plank
+        ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+        ctx.lineWidth = 0.7;
+        for (let k = 0; k < 3; k++) {
+          const y = Math.random() * s;
+          ctx.beginPath();
+          ctx.moveTo(i * w + w * 0.1, y);
+          ctx.lineTo(i * w + w * 0.9, y + (Math.random() - 0.5) * 6);
+          ctx.stroke();
+        }
+      }
+    }, 512);
+  }
+
   function stoneTexture() {
     return canvasTexture((ctx, s) => {
       ctx.fillStyle = '#8f8577';
@@ -99,6 +157,27 @@
     }, 256);
   }
 
+  // Coarse husk-fiber texture for the coconuts — directional streaks
+  // instead of a flat brown so they read as fibrous, not rubbery.
+  function huskTexture() {
+    return canvasTexture((ctx, s) => {
+      ctx.fillStyle = '#5a4530';
+      ctx.fillRect(0, 0, s, s);
+      ctx.strokeStyle = 'rgba(30,20,10,0.35)';
+      for (let i = 0; i < 90; i++) {
+        const x = Math.random() * s;
+        const y = Math.random() * s;
+        const len = 4 + Math.random() * 10;
+        const ang = Math.PI / 2 + (Math.random() - 0.5) * 0.6;
+        ctx.lineWidth = 0.6 + Math.random() * 0.8;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+        ctx.stroke();
+      }
+    }, 128);
+  }
+
   function leafTexture() {
     return canvasTexture((ctx, s) => {
       ctx.clearRect(0, 0, s, s);
@@ -113,6 +192,22 @@
       ctx.lineTo(s / 2, s * 0.92);
       ctx.stroke();
     }, 64);
+  }
+
+  // Simple over-under weave pattern for the harvest basket.
+  function basketTexture() {
+    return canvasTexture((ctx, s) => {
+      ctx.fillStyle = '#8a6a3d';
+      ctx.fillRect(0, 0, s, s);
+      const cell = 14;
+      for (let y = 0; y < s; y += cell) {
+        for (let x = 0; x < s; x += cell) {
+          const alt = ((x / cell) + (y / cell)) % 2 === 0;
+          ctx.fillStyle = alt ? 'rgba(60,40,15,0.28)' : 'rgba(255,220,170,0.12)';
+          ctx.fillRect(x, y, cell - 1.5, cell - 1.5);
+        }
+      }
+    }, 256);
   }
 
   function glowTexture() {
@@ -135,18 +230,138 @@
     }, 64);
   }
 
-  function labelTexture() {
-    return canvasTexture((ctx, s) => {
+  // Bottle label: draws the plain wordmark immediately (so the bottle is
+  // never blank), then swaps in the site's actual logo (frontend/assets/
+  // logo.png — already loaded elsewhere on the page, so this is normally
+  // instant from cache) once it loads. Same-origin static asset, not an
+  // external dependency.
+  function buildLabelTexture() {
+    const size = 256;
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const ctx = c.getContext('2d');
+
+    function draw(logoImg) {
+      ctx.clearRect(0, 0, size, size);
       ctx.fillStyle = '#fbf6ec';
-      ctx.fillRect(0, 0, s, s);
+      ctx.fillRect(0, 0, size, size);
+      ctx.strokeStyle = 'rgba(27,36,22,0.25)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(6, 6, size - 12, size - 12);
+      let textY = size * 0.46;
+      if (logoImg) {
+        const logoSize = size * 0.3;
+        ctx.drawImage(logoImg, size / 2 - logoSize / 2, size * 0.12, logoSize, logoSize);
+        textY = size * 0.58;
+      }
       ctx.fillStyle = '#1b2416';
       ctx.textAlign = 'center';
-      ctx.font = '600 20px Georgia, serif';
-      ctx.fillText('GROOVE', s / 2, s * 0.44);
+      ctx.font = '600 22px Georgia, serif';
+      ctx.fillText('GROOVE', size / 2, textY);
       ctx.font = '9px monospace';
       ctx.fillStyle = '#556b45';
-      ctx.fillText('ORGANICS', s / 2, s * 0.58);
-    }, 128);
+      ctx.fillText('ORGANICS', size / 2, textY + 16);
+      ctx.font = '7px monospace';
+      ctx.fillStyle = '#8a7a5a';
+      ctx.fillText('COLD-PRESSED COCONUT OIL', size / 2, textY + 30);
+    }
+
+    draw(null);
+    const texture = new THREE.CanvasTexture(c);
+    const img = new Image();
+    img.onload = () => {
+      draw(img);
+      texture.needsUpdate = true;
+    };
+    img.src = '/assets/logo.png';
+    return texture;
+  }
+
+  // ---------------------------------------------------------------------
+  // A hand-built variable-radius tube: THREE.TubeGeometry only supports a
+  // constant radius, but the oil needs to look like it's actually pouring
+  // — thicker where it leaves the press, narrowing as it falls, with a
+  // touch of organic ripple rather than a perfectly uniform pipe.
+  // ---------------------------------------------------------------------
+  function buildTaperedTubeGeometry(curve, radiusStart, radiusEnd, tubularSegments, radialSegments) {
+    const positions = [];
+    const normals = [];
+    const uvs = [];
+    const indices = [];
+    const frames = curve.computeFrenetFrames(tubularSegments, false);
+    const points = curve.getSpacedPoints(tubularSegments);
+
+    for (let i = 0; i <= tubularSegments; i++) {
+      const t = i / tubularSegments;
+      const radius = THREE.MathUtils.lerp(radiusStart, radiusEnd, t) * (1 + Math.sin(t * 13) * 0.05);
+      const normal = frames.normals[i];
+      const binormal = frames.binormals[i];
+      const p = points[i];
+      for (let j = 0; j <= radialSegments; j++) {
+        const v = (j / radialSegments) * Math.PI * 2;
+        const sin = Math.sin(v);
+        const cos = -Math.cos(v);
+        const nx = cos * normal.x + sin * binormal.x;
+        const ny = cos * normal.y + sin * binormal.y;
+        const nz = cos * normal.z + sin * binormal.z;
+        positions.push(p.x + radius * nx, p.y + radius * ny, p.z + radius * nz);
+        normals.push(nx, ny, nz);
+        uvs.push(t, j / radialSegments);
+      }
+    }
+    for (let i = 1; i <= tubularSegments; i++) {
+      for (let j = 1; j <= radialSegments; j++) {
+        const a = (radialSegments + 1) * (i - 1) + (j - 1);
+        const b = (radialSegments + 1) * i + (j - 1);
+        const c = (radialSegments + 1) * i + j;
+        const d = (radialSegments + 1) * (i - 1) + j;
+        indices.push(a, b, d, b, c, d);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setIndex(indices);
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    return geo;
+  }
+
+  function buildOilStream(from, to, sag, radiusStart, radiusEnd) {
+    const mid = from.clone().lerp(to, 0.5);
+    mid.y -= sag;
+    const curve = new THREE.CatmullRomCurve3([from, mid, to]);
+    const tex = flowTexture();
+    const mat = new THREE.MeshPhysicalMaterial({
+      color: 0xefc44a, transmission: 0.42, roughness: 0.14, ior: 1.42,
+      transparent: true, opacity: 0.96, emissive: 0x8a5a08, emissiveIntensity: 0.45, map: tex,
+    });
+    const mesh = new THREE.Mesh(buildTaperedTubeGeometry(curve, radiusStart, radiusEnd, 28, 10), mat);
+    mesh.userData.flowTex = tex;
+
+    // A slim bright highlight running alongside the main stream — cheap
+    // stand-in for a specular reflection, reads as "wet".
+    const highlightCurve = new THREE.CatmullRomCurve3([
+      from.clone().add(new THREE.Vector3(radiusStart * 0.4, 0, 0)),
+      mid.clone().add(new THREE.Vector3(radiusStart * 0.2, 0, 0)),
+      to.clone().add(new THREE.Vector3(radiusEnd * 0.3, 0, 0)),
+    ]);
+    const highlight = new THREE.Mesh(
+      new THREE.TubeGeometry(highlightCurve, 20, Math.max(radiusStart, radiusEnd) * 0.22, 6, false),
+      new THREE.MeshBasicMaterial({ color: 0xfff3d0, transparent: true, opacity: 0.5 })
+    );
+
+    // A few small droplets that loop down the first third of the stream,
+    // staggered, for a sense of continuous pouring rather than a static
+    // solid rod of oil.
+    const dropMat = new THREE.MeshPhysicalMaterial({ color: 0xefc44a, transmission: 0.3, roughness: 0.1, emissive: 0x8a5a08, emissiveIntensity: 0.4 });
+    const droplets = [0, 0.33, 0.66].map((phase) => {
+      const drop = new THREE.Mesh(new THREE.SphereGeometry(radiusStart * 0.9, 8, 8), dropMat);
+      drop.userData.phase = phase;
+      return drop;
+    });
+
+    return { mesh, highlight, droplets, curve };
   }
 
   // ---------------------------------------------------------------------
@@ -154,37 +369,65 @@
   // ---------------------------------------------------------------------
   function buildPressAssembly() {
     const group = new THREE.Group();
-    const woodDark = new THREE.MeshStandardMaterial({ map: woodTexture('#5b3d24', '#2f2013'), roughness: 0.85, metalness: 0.05 });
+    const barrelMat = new THREE.MeshStandardMaterial({ map: barrelTexture(), roughness: 0.88, metalness: 0.04 });
     const woodMid = new THREE.MeshStandardMaterial({ map: woodTexture('#7a5230', '#4a331d'), roughness: 0.8, metalness: 0.05 });
+    const woodDark = new THREE.MeshStandardMaterial({ map: woodTexture('#4a3018', '#2a1a0c'), roughness: 0.85, metalness: 0.05 });
     const metal = new THREE.MeshStandardMaterial({ color: 0x2b2b28, roughness: 0.4, metalness: 0.75 });
 
-    const drum = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.3, 1.05, 22), woodDark);
-    drum.position.y = 0.55;
+    // Stone quern base the drum sits on — a traditional chekku is set into
+    // a fixed stone/earth foundation, not just resting on a tabletop.
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.36, 1.5, 0.22, 24),
+      new THREE.MeshStandardMaterial({ map: stoneTexture(), roughness: 0.9 })
+    );
+    base.position.y = 0.02;
+    group.add(base);
+
+    const drumGeo = jitterGeometry(new THREE.CylinderGeometry(1.15, 1.3, 1.05, 24, 3), 0.015);
+    const drum = new THREE.Mesh(drumGeo, barrelMat);
+    drum.position.y = 0.63;
     group.add(drum);
 
-    [1.0, 0.22].forEach((y) => {
-      const band = new THREE.Mesh(new THREE.TorusGeometry(1.18, 0.045, 8, 28), metal);
+    // Three iron bands, slightly irregular radii/heights — hand-fitted,
+    // not machine-uniform.
+    [1.08, 0.66, 0.24].forEach((y, i) => {
+      const band = new THREE.Mesh(new THREE.TorusGeometry(1.17 + (i % 2) * 0.01, 0.045, 8, 28), metal);
       band.rotation.x = Math.PI / 2;
-      band.position.y = y;
+      band.position.y = y + 0.08;
       group.add(band);
     });
 
-    // Rotating mechanism: center pole + cross beam, spins slowly and
-    // continuously to read as "the press operating".
+    // Rotating mechanism: center pole + a single asymmetric lever arm
+    // (longer on one side, a short stub on the other for visual balance)
+    // — reads as "the arm a person pushes to turn the wheel", not a
+    // symmetric crossbar/plus-sign.
     const mech = new THREE.Group();
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 2.3, 12), woodMid);
-    pole.position.y = 1.55;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 2.0, 12), woodMid);
+    pole.position.y = 1.48;
     mech.add(pole);
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.13, 0.13), woodMid);
-    beam.position.y = 2.4;
+
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 1.9, 10), woodMid);
+    beam.rotation.z = Math.PI / 2 - 0.08;
+    beam.position.set(0.55, 2.18, 0);
     mech.add(beam);
+
+    // Rope-wrap detail near the handle end — a few thin dark torus rings.
+    for (let i = 0; i < 4; i++) {
+      const wrap = new THREE.Mesh(
+        new THREE.TorusGeometry(0.1, 0.015, 6, 12),
+        new THREE.MeshStandardMaterial({ color: 0x2a2016, roughness: 0.9 })
+      );
+      wrap.rotation.y = Math.PI / 2;
+      wrap.position.set(1.15 + i * 0.06, 2.1, 0);
+      mech.add(wrap);
+    }
     const beamCap = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 10), metal);
-    beamCap.position.set(1.05, 2.4, 0);
+    beamCap.position.set(1.47, 2.1, 0);
     mech.add(beamCap);
     group.add(mech);
 
     const outlet = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.16, 0.36), woodDark);
-    outlet.position.set(1.05, 0.14, 0);
+    outlet.position.set(1.05, 0.22, 0);
     group.add(outlet);
 
     group.userData.mechanism = mech;
@@ -195,30 +438,58 @@
 
   function buildCoconutCluster() {
     const group = new THREE.Group();
-    const husk = new THREE.MeshStandardMaterial({ color: 0x5a4530, roughness: 0.95 });
-    const flesh = new THREE.MeshStandardMaterial({ color: 0xf3ead9, roughness: 0.9 });
-    const positions = [
-      [-0.3, 0.22, 0.1],
-      [0.25, 0.2, -0.15],
-      [0, 0.5, 0],
-      [0.42, 0.22, 0.28],
+    const husk = new THREE.MeshStandardMaterial({ map: huskTexture(), roughness: 0.95 });
+    const flesh = new THREE.MeshStandardMaterial({ color: 0xf3ead9, roughness: 0.85 });
+    const shellRim = new THREE.MeshStandardMaterial({ color: 0x3a2a18, roughness: 0.8 });
+
+    // A shallow woven basket under the pile — context and craft detail,
+    // matching how coconuts actually arrive at a press.
+    const basket = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.62, 0.5, 0.28, 20, 1, true),
+      new THREE.MeshStandardMaterial({ map: basketTexture(), roughness: 0.95, side: THREE.DoubleSide })
+    );
+    basket.position.y = 0.14;
+    group.add(basket);
+    const basketFloor = new THREE.Mesh(
+      new THREE.CircleGeometry(0.5, 20),
+      new THREE.MeshStandardMaterial({ map: basketTexture(), roughness: 0.95 })
+    );
+    basketFloor.rotation.x = -Math.PI / 2;
+    basketFloor.position.y = 0.02;
+    group.add(basketFloor);
+
+    const wholePositions = [
+      [-0.24, 0.42, 0.08],
+      [0.22, 0.4, -0.12],
+      [0.36, 0.42, 0.2],
     ];
-    let centerMesh = null;
-    positions.forEach((p, i) => {
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 10), husk);
+    wholePositions.forEach((p) => {
+      const geo = jitterGeometry(new THREE.IcosahedronGeometry(0.24, 2), 0.035);
+      const mesh = new THREE.Mesh(geo, husk);
       mesh.position.set(p[0], p[1], p[2]);
-      mesh.scale.y = 0.92;
+      mesh.scale.y = 0.94;
+      mesh.rotation.set(Math.random() * 0.6, Math.random() * Math.PI, Math.random() * 0.3);
       group.add(mesh);
-      if (i === 2) {
-        centerMesh = mesh;
-        const half = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10, 0, Math.PI), flesh);
-        half.position.set(p[0], p[1] + 0.02, p[2] + 0.02);
-        half.rotation.y = Math.PI / 3;
-        group.add(half);
-      }
     });
+
+    // One halved coconut, clearly showing white flesh + a shell rim, so the
+    // pile reads unmistakably as coconuts and not generic brown balls.
+    const halfBase = new THREE.Group();
+    const outerGeo = jitterGeometry(new THREE.SphereGeometry(0.24, 16, 12, 0, Math.PI), 0.02);
+    const outer = new THREE.Mesh(outerGeo, husk);
+    halfBase.add(outer);
+    const inner = new THREE.Mesh(new THREE.SphereGeometry(0.215, 16, 12, 0, Math.PI), flesh);
+    inner.scale.set(0.97, 0.97, 0.97);
+    halfBase.add(inner);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.215, 0.02, 8, 24, Math.PI), shellRim);
+    rim.rotation.x = Math.PI / 2;
+    halfBase.add(rim);
+    halfBase.position.set(-0.04, 0.42, -0.22);
+    halfBase.rotation.y = Math.PI / 3;
+    group.add(halfBase);
+
     group.userData.hotspotLabel = 'Coconut, hand-picked';
-    group.userData.hotspotMesh = centerMesh;
+    group.userData.hotspotMesh = outer;
     return group;
   }
 
@@ -255,42 +526,75 @@
 
   function buildBottle() {
     const group = new THREE.Group();
+    // A rounder shoulder and a slightly longer neck than a generic
+    // cylinder — closer to an actual small-batch oil bottle silhouette.
     const profile = [
       new THREE.Vector2(0, 0),
-      new THREE.Vector2(0.32, 0),
-      new THREE.Vector2(0.34, 0.05),
-      new THREE.Vector2(0.34, 0.55),
-      new THREE.Vector2(0.3, 0.65),
-      new THREE.Vector2(0.14, 0.78),
-      new THREE.Vector2(0.13, 0.95),
-      new THREE.Vector2(0.16, 0.97),
+      new THREE.Vector2(0.3, 0),
+      new THREE.Vector2(0.33, 0.06),
+      new THREE.Vector2(0.33, 0.48),
+      new THREE.Vector2(0.29, 0.62),
+      new THREE.Vector2(0.2, 0.72),
+      new THREE.Vector2(0.13, 0.8),
+      new THREE.Vector2(0.125, 1.0),
+      new THREE.Vector2(0.155, 1.02),
     ];
-    const glass = new THREE.MeshPhysicalMaterial({ color: 0xdff0df, transmission: 0.9, roughness: 0.08, ior: 1.5, transparent: true, opacity: 1 });
-    const bottle = new THREE.Mesh(new THREE.LatheGeometry(profile, 20), glass);
+    // Amber/brown-tinted glass — real cold-pressed oil is commonly bottled
+    // in amber glass to protect it from light; also just reads more
+    // "premium apothecary" than clear glass.
+    const glass = new THREE.MeshPhysicalMaterial({
+      color: 0x8a5a22, transmission: 0.72, roughness: 0.06, ior: 1.5, transparent: true, opacity: 1,
+    });
+    const bottle = new THREE.Mesh(new THREE.LatheGeometry(profile, 24), glass);
     group.add(bottle);
 
-    const oilProfile = profile.filter((p) => p.y <= 0.5).map((p) => new THREE.Vector2(p.x * 0.94, p.y));
+    // A slightly larger, very faint outer shell with additive blending —
+    // a cheap stand-in for a fresnel rim-light on the glass without a
+    // real environment map.
+    const rimShell = new THREE.Mesh(
+      new THREE.LatheGeometry(profile.map((p) => new THREE.Vector2(p.x * 1.05, p.y)), 24),
+      new THREE.MeshBasicMaterial({ color: 0xffe9b0, transparent: true, opacity: 0.08, side: THREE.BackSide, blending: THREE.AdditiveBlending })
+    );
+    group.add(rimShell);
+
+    const oilProfile = profile.filter((p) => p.y <= 0.44).map((p) => new THREE.Vector2(p.x * 0.92, p.y));
     const oil = new THREE.Mesh(
-      new THREE.LatheGeometry(oilProfile, 20),
-      new THREE.MeshPhysicalMaterial({ color: 0xd9a520, transmission: 0.5, roughness: 0.12, ior: 1.4 })
+      new THREE.LatheGeometry(oilProfile, 24),
+      new THREE.MeshPhysicalMaterial({ color: 0xd9a520, transmission: 0.5, roughness: 0.1, ior: 1.4 })
     );
     group.add(oil);
 
+    // Domed premium cap with a couple of ridge lines.
     const cap = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.15, 0.15, 0.08, 16),
-      new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.35, metalness: 0.7 })
+      new THREE.CylinderGeometry(0.155, 0.16, 0.1, 18),
+      new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.3, metalness: 0.75 })
     );
-    cap.position.y = 1.0;
+    cap.position.y = 1.05;
     group.add(cap);
+    const capDome = new THREE.Mesh(
+      new THREE.SphereGeometry(0.155, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0xd4b23a, roughness: 0.28, metalness: 0.75 })
+    );
+    capDome.position.y = 1.1;
+    group.add(capDome);
+    for (let i = 0; i < 2; i++) {
+      const ridge = new THREE.Mesh(
+        new THREE.TorusGeometry(0.157, 0.006, 6, 20),
+        new THREE.MeshStandardMaterial({ color: 0x8a6a1a, roughness: 0.4, metalness: 0.6 })
+      );
+      ridge.rotation.x = Math.PI / 2;
+      ridge.position.y = 1.02 + i * 0.04;
+      group.add(ridge);
+    }
 
     const label = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.36, 0.28),
-      new THREE.MeshStandardMaterial({ map: labelTexture(), roughness: 0.9, transparent: true })
+      new THREE.PlaneGeometry(0.36, 0.32),
+      new THREE.MeshStandardMaterial({ map: buildLabelTexture(), roughness: 0.9, transparent: true })
     );
-    label.position.set(0, 0.42, 0.35);
+    label.position.set(0, 0.38, 0.335);
     group.add(label);
 
-    group.userData.hotspotLabel = 'Groove Organics bottle';
+    group.userData.hotspotLabel = 'Groove Organics — Cold-Pressed Coconut Oil';
     group.userData.hotspotMesh = bottle;
     group.userData.oilMesh = oil;
     return group;
@@ -320,20 +624,6 @@
       group.add(leaf);
     });
     return group;
-  }
-
-  function buildOilStream(from, to, sag) {
-    const mid = from.clone().lerp(to, 0.5);
-    mid.y -= sag;
-    const curve = new THREE.CatmullRomCurve3([from, mid, to]);
-    const tex = flowTexture();
-    const mat = new THREE.MeshPhysicalMaterial({
-      color: 0xe8b93a, transmission: 0.5, roughness: 0.2, ior: 1.4,
-      transparent: true, opacity: 0.92, emissive: 0x3a2a05, emissiveIntensity: 0.25, map: tex,
-    });
-    const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.028, 8, false), mat);
-    mesh.userData.flowTex = tex;
-    return mesh;
   }
 
   function buildGlow(color) {
@@ -369,15 +659,17 @@
     bottle.scale.setScalar(1.15);
     scene.add(bottle);
 
-    const outletWorld = press.position.clone().add(new THREE.Vector3(1.05, 0.13, 0));
+    const outletWorld = press.position.clone().add(new THREE.Vector3(1.05, 0.21, 0));
     const vesselTopWorld = vessel.position.clone().add(new THREE.Vector3(0, 0.78, 0));
-    const streamA = buildOilStream(outletWorld, vesselTopWorld, 0.5);
-    scene.add(streamA);
+    const streamA = buildOilStream(outletWorld, vesselTopWorld, 0.5, 0.075, 0.045);
+    scene.add(streamA.mesh, streamA.highlight);
+    streamA.droplets.forEach((d) => scene.add(d));
 
     const vesselBaseWorld = vessel.position.clone().add(new THREE.Vector3(0.18, 0.15, -0.1));
-    const bottleTopWorld = bottle.position.clone().add(new THREE.Vector3(0, 1.0, 0));
-    const streamB = buildOilStream(vesselBaseWorld, bottleTopWorld, 0.3);
-    scene.add(streamB);
+    const bottleTopWorld = bottle.position.clone().add(new THREE.Vector3(0, 1.02, 0));
+    const streamB = buildOilStream(vesselBaseWorld, bottleTopWorld, 0.3, 0.05, 0.032);
+    scene.add(streamB.mesh, streamB.highlight);
+    streamB.droplets.forEach((d) => scene.add(d));
 
     const glowA = buildGlow(0xffd27a);
     glowA.position.copy(outletWorld).setY(outletWorld.y + 0.08);
@@ -390,7 +682,7 @@
     const ambient = new THREE.AmbientLight(0xf1e9da, 0.42);
     scene.add(ambient);
 
-    const key = new THREE.DirectionalLight(0xffe2ac, 1.3);
+    const key = new THREE.DirectionalLight(0xffe2ac, 1.35);
     key.position.set(4, 6, 5);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
@@ -399,6 +691,13 @@
     key.shadow.camera.top = 6;
     key.shadow.camera.bottom = -4;
     scene.add(key);
+
+    // A soft secondary warm light from the other side so shadows aren't a
+    // single flat direction — helps the barrel staves and coconut jitter
+    // actually read as texture rather than disappearing into shadow.
+    const fill = new THREE.DirectionalLight(0xd9c9a0, 0.4);
+    fill.position.set(-5, 3, 2);
+    scene.add(fill);
 
     const rim = new THREE.PointLight(0x44573a, 0.5, 12);
     rim.position.set(-3, 3, -3);
@@ -418,19 +717,24 @@
     });
     slab.castShadow = false;
 
-    return { scene, press, coconuts, vessel, bottle, streamA, streamB, glowA, glowB, hotspots: [press, coconuts, vessel, bottle] };
+    return {
+      scene, press, coconuts, vessel, bottle, streamA, streamB, glowA, glowB,
+      hotspots: [press, coconuts, vessel, bottle],
+    };
   }
 
   // ---------------------------------------------------------------------
   // Camera keyframes — one per stage, plus a pulled-back closing reveal.
-  // Positions line up with the object placements in buildScene() above.
+  // The lockup framing (kf4) is shifted right of scene-center so the left
+  // side of the frame is comparatively open — that's where the closing
+  // text sits, instead of directly over the press.
   // ---------------------------------------------------------------------
   const CAMERA_KEYFRAMES = [
     { pos: new THREE.Vector3(-3.4, 1.3, 4.0), look: new THREE.Vector3(-3.4, 0.4, 0) },
     { pos: new THREE.Vector3(0.1, 1.7, 4.4), look: new THREE.Vector3(0, 1.0, 0) },
     { pos: new THREE.Vector3(2.5, 1.4, 3.6), look: new THREE.Vector3(2.6, 0.7, 0) },
     { pos: new THREE.Vector3(4.75, 1.4, 3.4), look: new THREE.Vector3(4.9, 0.9, 0) },
-    { pos: new THREE.Vector3(0.8, 3.4, 10.5), look: new THREE.Vector3(0.8, 0.8, 0) },
+    { pos: new THREE.Vector3(2.6, 3.2, 10.5), look: new THREE.Vector3(2.6, 0.8, 0) },
   ];
 
   function smoothstep(t) {
@@ -458,7 +762,7 @@
       const mesh = hovered.userData.hotspotMesh;
       if (mesh && mesh.material) {
         mesh.material.emissive = new THREE.Color(0x000000);
-        mesh.material.emissiveIntensity = mesh.userData._baseEmissiveIntensity || 0;
+        mesh.material.emissiveIntensity = 0;
       }
       hovered = null;
       tooltip.classList.remove('is-visible');
@@ -477,7 +781,7 @@
         if (group && group !== hovered) {
           clearHover();
           hovered = group;
-          if (hitMesh.material) {
+          if (hitMesh.material && 'emissive' in hitMesh.material) {
             hitMesh.material.emissive = new THREE.Color(0xc9a227);
             hitMesh.material.emissiveIntensity = 0.35;
           }
@@ -621,6 +925,20 @@
     }
   }
 
+  function animateDroplets(stream, elapsed, speed) {
+    stream.droplets.forEach((drop) => {
+      const t = ((elapsed * speed + drop.userData.phase) % 1);
+      // Only travel the first ~40% of the curve, near the outlet, then
+      // "reset" (fade near t=0.4..1 by shrinking) — keeps them reading as
+      // drips leaving the source rather than balls riding the whole pipe.
+      const travel = Math.min(t / 0.4, 1);
+      const pt = stream.curve.getPointAt(Math.min(travel, 0.999));
+      drop.position.copy(pt);
+      const scale = t < 0.4 ? 1 : Math.max(0, 1 - (t - 0.4) / 0.15);
+      drop.scale.setScalar(scale);
+    });
+  }
+
   function animate() {
     rafId = requestAnimationFrame(animate);
     if (!renderer || !camera || !built) return;
@@ -637,11 +955,14 @@
     updateStageUI(progress);
 
     if (built.press.userData.mechanism) built.press.userData.mechanism.rotation.y += delta * 0.22;
+
     [built.streamA, built.streamB].forEach((s, i) => {
-      if (s.userData.flowTex) s.userData.flowTex.offset.y -= delta * 0.5;
-      const wob = 1 + Math.sin(elapsed * 3 + i) * 0.02;
-      s.scale.set(wob, 1, wob);
+      if (s.mesh.userData.flowTex) s.mesh.userData.flowTex.offset.y -= delta * 0.5;
+      const wob = 1 + Math.sin(elapsed * 3 + i) * 0.015;
+      s.mesh.scale.set(wob, 1, wob);
+      animateDroplets(s, elapsed, 0.7 + i * 0.15);
     });
+
     if (built.vessel.userData.oilMesh) built.vessel.userData.oilMesh.scale.y = 1 + Math.sin(elapsed * 1.4) * 0.01;
     if (built.bottle.userData.oilMesh) built.bottle.userData.oilMesh.scale.y = 1 + Math.sin(elapsed * 1.4 + 1) * 0.01;
     built.glowA.material.opacity = 0.75 + Math.sin(elapsed * 2.2) * 0.15;

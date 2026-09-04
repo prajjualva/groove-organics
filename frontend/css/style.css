@@ -362,7 +362,7 @@ a { color: inherit; text-decoration: none; }
 /* Breaks out of .section's own top/bottom padding so the pinned canvas can
    go full-bleed; the fallback content below keeps the section's normal
    padding since it's a sibling, not a child, of the scroller. */
-.process3d__scroller { display: none; position: relative; height: 400vh; margin: -96px 0; }
+.process3d__scroller { display: none; position: relative; height: 260vh; margin: -96px 0; }
 .process3d__viewport {
   position: sticky; top: 0; height: 100vh; overflow: hidden;
   display: flex; align-items: center;
@@ -384,6 +384,9 @@ a { color: inherit; text-decoration: none; }
 .process3d__lockup {
   position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 16px; text-align: center; opacity: 0; pointer-events: none; transition: opacity 0.7s ease;
+  /* Soft vignette behind the text so it stays legible over the busy wide
+     shot of the whole diorama, regardless of what's directly behind it. */
+  background: radial-gradient(ellipse 46% 60% at 50% 50%, rgba(27,36,22,0.75) 0%, rgba(27,36,22,0.35) 55%, rgba(27,36,22,0) 80%);
 }
 .process3d__lockup.is-active { opacity: 1; pointer-events: auto; }
 .process3d__lockup-line { font-size: clamp(1.6rem, 4vw, 2.9rem); color: var(--cream); line-height: 1.15; }
@@ -407,6 +410,35 @@ a { color: inherit; text-decoration: none; }
 }
 @media (max-width: 720px) {
   .process3d__progress { display: none; }
+}
+
+/* =====================================================================
+   Process video — "The Journey of the Oil" as a real cinematic loop.
+   Simpler than the .process3d experience above: the <video poster> frame
+   is itself a finished, fully-composed shot (baked-in title, stage labels,
+   logo), so it doubles as the static/no-JS/reduced-motion fallback with
+   zero extra markup — process-video.js only ever decides whether to call
+   .play(), never swaps in a different section.
+   ===================================================================== */
+.process-video { position: relative; background: var(--moss-900); overflow: clip; }
+.process-video__frame {
+  position: relative; width: 100%; overflow: hidden;
+  aspect-ratio: 16 / 9; max-height: 88vh; background: var(--moss-900);
+}
+.process-video__media {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block; background: var(--moss-900);
+}
+.process-video__scrim {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, rgba(27,36,22,0) 55%, rgba(27,36,22,0.65) 100%);
+}
+.process-video__cta-bar {
+  position: relative; display: flex; justify-content: center; margin-top: -44px; z-index: 2;
+}
+@media (max-width: 720px) {
+  .process-video__frame { aspect-ratio: 4 / 5; max-height: 70vh; }
+  .process-video__cta-bar { margin-top: -32px; }
 }
 
 /* =====================================================================

@@ -118,63 +118,38 @@
 </section>
 
 <!--
-  "The Journey of the Oil" — scroll-driven Three.js scene (process3d.js).
-  Progressive enhancement: .process3d__scroller starts hidden (display:none
-  in CSS) and is only revealed by process3d.js once it has confirmed WebGL
-  support, a wide-enough viewport, and no prefers-reduced-motion — and only
-  once the section is actually near the viewport (lazy init). Everyone else
-  (no-JS, script blocked, small screens, reduced motion, low measured FPS)
-  sees the plain .process fallback rows below, which stay in the DOM either
-  way and are what admin content edits always update first.
+  "The Journey of the Oil" — a real cinematic video loop (the Three.js
+  version in process3d.js is left in the codebase but no longer used here;
+  its section IDs aren't in this markup so that script just no-ops).
+  process-video.js lazy-loads/plays the video once this section is near
+  the viewport, keeps it muted/looping, and never forces motion on visitors
+  who've set prefers-reduced-motion — the <video poster> is itself a full
+  frame of the same footage, so even a fully static view still looks right.
+  The plain icon+copy rows below are real semantic/CMS-editable content,
+  always present — not a fallback state to toggle, just the detail section
+  under the hero visual.
 -->
-<section class="section section--dark process3d" id="process3d-section">
-  <div class="process3d__scroller" id="process3d-scroller">
-    <div class="process3d__viewport">
-      <canvas id="process3d-canvas" class="process3d__canvas" aria-hidden="true"></canvas>
-      <div class="process3d__scrim"></div>
-
-      <div class="process3d__stage-copy" id="process3d-copy">
-        <div class="process3d__stage is-active" data-stage="0">
-          <span class="mono process3d__stage-num">01</span>
-          <h3 data-step-title>Harvest</h3>
-          <p data-step-body>Coconuts hand-picked at peak ripeness from partner farms, milled within 24 hours of harvest so nothing sits and turns.</p>
-        </div>
-        <div class="process3d__stage" data-stage="1">
-          <span class="mono process3d__stage-num">02</span>
-          <h3 data-step-title>Wood-Press</h3>
-          <p data-step-body>The chekku/ghani wheel turns slowly for hours, staying below body temperature so the oil is never heat-stressed.</p>
-        </div>
-        <div class="process3d__stage" data-stage="2">
-          <span class="mono process3d__stage-num">03</span>
-          <h3 data-step-title>Settle &amp; Filter</h3>
-          <p data-step-body>Gravity-settled and cloth-filtered only — no centrifuge, no bleaching, no deodorizing.</p>
-        </div>
-        <div class="process3d__stage" data-stage="3">
-          <span class="mono process3d__stage-num">04</span>
-          <h3 data-step-title>Bottle</h3>
-          <p data-step-body>Hand-poured into reusable glass, labelled and sealed in small batches, ready to come home.</p>
-        </div>
-      </div>
-
-      <div class="process3d__lockup" id="process3d-lockup">
-        <span class="eyebrow mono">The Journey of the Oil</span>
-        <span class="process3d__lockup-line">From Earth.</span>
-        <span class="process3d__lockup-line">To Bottle.</span>
-        <a href="/shop" class="btn btn--primary">Explore Our Oils</a>
-      </div>
-
-      <div class="process3d__progress" id="process3d-progress" aria-hidden="true">
-        <span class="process3d__progress-dot is-active" data-dot="0"></span>
-        <span class="process3d__progress-dot" data-dot="1"></span>
-        <span class="process3d__progress-dot" data-dot="2"></span>
-        <span class="process3d__progress-dot" data-dot="3"></span>
-      </div>
-
-      <div class="process3d__tooltip" id="process3d-tooltip" hidden></div>
-    </div>
+<section class="section section--dark process-video" id="process-video-section">
+  <div class="process-video__frame">
+    <video
+      id="process-video-media"
+      class="process-video__media"
+      muted
+      loop
+      playsinline
+      preload="none"
+      poster="/assets/process-journey-poster.jpg"
+      aria-label="The traditional wood-press journey from coconut to bottled oil"
+    >
+      <source src="/assets/process-journey.mp4" type="video/mp4" />
+    </video>
+    <div class="process-video__scrim"></div>
+  </div>
+  <div class="container process-video__cta-bar">
+    <a href="/shop" class="btn btn--primary">Explore Our Oils</a>
   </div>
 
-  <div class="container" id="process-fallback">
+  <div class="container" id="process-fallback" style="margin-top:64px;">
     <span class="eyebrow reveal" id="process-eyebrow">From Farm to Bottle</span>
     <h2 class="reveal" id="process-title" style="max-width:600px;">Four steps. No shortcuts.</h2>
     <div style="margin-top:40px;" id="process-steps">
@@ -223,6 +198,7 @@
 <script src="/js/products-render.js"></script>
 <script src="/js/hero3d.js" defer></script>
 <script src="/js/process3d.js" defer></script>
+<script src="/js/process-video.js" defer></script>
 <script src="/js/home-content.js"></script>
 <script src="/js/main.js"></script>
 </body>
