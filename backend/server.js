@@ -25,7 +25,10 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || true, credentials: true }));
-app.use(express.json());
+// Default body limit is 100kb — far too small once product/banner images are
+// uploaded as base64 data URLs (demo mode, before Supabase Storage is wired
+// up for real uploads). 15mb comfortably covers a compressed photo.
+app.use(express.json({ limit: '15mb' }));
 app.use(attachUser);
 
 // --- API routes ---
