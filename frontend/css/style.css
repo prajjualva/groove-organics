@@ -329,6 +329,55 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* =====================================================================
+   Homepage brand philosophy — replaces the old timeline+orbit section.
+   Editorial and restrained: a serif headline, a short italic lede, three
+   quiet principles (no cards, no borders-everywhere), and a single
+   considered illustration with subtle ambient motion. The detailed
+   year-by-year history stays on the dedicated Our Story page — see the
+   .story / .story__milestones rules above, which are untouched and still
+   used there.
+   ===================================================================== */
+.philosophy__grid {
+  display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 72px; align-items: center;
+}
+.philosophy__lede {
+  font-family: var(--font-display); font-style: italic; font-weight: 500;
+  font-size: 1.2rem; color: var(--sand-200); opacity: 0.92; max-width: 420px;
+  margin: 4px 0 40px;
+}
+.philosophy__principles { display: flex; flex-direction: column; }
+.philosophy__principle {
+  display: grid; grid-template-columns: 40px 1fr; gap: 20px;
+  padding: 24px 0; border-top: 1px solid rgba(251,246,236,0.14);
+}
+.philosophy__principle:last-child { border-bottom: 1px solid rgba(251,246,236,0.14); }
+.philosophy__num { color: var(--gold-500); font-size: 0.85rem; padding-top: 4px; }
+.philosophy__principle h4 {
+  font-family: var(--font-display); color: var(--cream); font-size: 1.15rem;
+  letter-spacing: 0.01em; margin: 0 0 6px;
+}
+.philosophy__principle p { margin: 0; color: var(--sand-200); opacity: 0.78; font-size: 0.96rem; max-width: 360px; }
+
+.philosophy__visual { position: relative; display: flex; align-items: center; justify-content: center; min-height: 420px; }
+.philosophy__glow {
+  position: absolute; width: 320px; height: 320px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(201,162,39,0.22) 0%, rgba(201,162,39,0.06) 55%, rgba(201,162,39,0) 76%);
+  filter: blur(6px);
+  animation: philosophy-glow-float 9s ease-in-out infinite;
+}
+.philosophy__art { position: relative; width: 100%; max-width: 340px; will-change: transform; }
+@keyframes philosophy-glow-float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-12px) scale(1.03); }
+}
+
+@media (max-width: 860px) {
+  .philosophy__grid { grid-template-columns: 1fr; gap: 44px; }
+  .philosophy__visual { order: -1; min-height: 300px; }
+  .philosophy__glow { width: 240px; height: 240px; }
+}
+
+/* =====================================================================
    Process index (label-style rows)
    ===================================================================== */
 .process {
@@ -537,6 +586,25 @@ a { color: inherit; text-decoration: none; }
 .banner-note {
   background: var(--sand-200); border: 1px solid var(--sand-300); border-radius: var(--radius-sm);
   padding: 12px 16px; font-size: 0.85rem; color: var(--moss-700); margin-bottom: 24px;
+}
+
+/* =====================================================================
+   Two-column split layouts — checkout (form + summary), cart (items +
+   summary), contact (form + details) and the product page (image +
+   details) all used a fixed-ratio inline grid with no mobile handling,
+   which is why checkout felt cramped/disproportionate on phones instead
+   of stacking: both columns stayed side-by-side at any width. One shared
+   class + breakpoint so all four collapse to a single column below
+   ~860px (content column first, aside/summary below it, which already
+   matches DOM order on every page that uses this).
+   ===================================================================== */
+.split-grid { display: grid; gap: 40px; align-items: start; }
+.split-grid--checkout { grid-template-columns: 1.4fr 1fr; }
+.split-grid--cart { grid-template-columns: 2fr 1fr; }
+.split-grid--contact { grid-template-columns: 1.2fr 1fr; gap: 48px; }
+.split-grid--pdp { grid-template-columns: 1fr 1fr; gap: 56px; }
+@media (max-width: 860px) {
+  .split-grid { grid-template-columns: 1fr !important; gap: 32px; }
 }
 
 /* Card / table shells used across shop, cart, admin, staff */

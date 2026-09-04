@@ -29,7 +29,7 @@ async function loadProduct() {
     const hasVariants = variants.length > 0;
 
     wrap.innerHTML = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:start;">
+      <div class="split-grid split-grid--pdp">
         <div class="product-card__image" style="aspect-ratio:1/1;">
           ${
             product.image_url

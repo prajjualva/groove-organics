@@ -129,6 +129,14 @@ async function loadHomepageContent() {
       .join('');
   }
 
+  // homepage_story (eyebrow/title/body/milestones) used to drive the old
+  // "Our Story" timeline section on this page. That section was replaced
+  // by a fixed "Our Philosophy" section whose copy lives directly in
+  // index.html, on purpose — see the comment there. #story-eyebrow,
+  // #story-title, #story-body and #story-milestones no longer exist in
+  // this page's markup, so every lookup below is null and this block is
+  // an intentional no-op; left in place in case homepage_story content
+  // is ever wired to a page again.
   const story = content.homepage_story;
   if (story) {
     const eyebrow = document.getElementById('story-eyebrow');
