@@ -164,6 +164,22 @@ async function loadHomepageContent() {
       // fade in instead of staying invisible forever.
       if (typeof initScrollReveal === 'function') initScrollReveal();
     }
+
+    // The scroll-driven 3D "Journey of the Oil" experience (process3d.js)
+    // shows its own copy of this same step text as an HTML overlay on top
+    // of the canvas — same admin-edited content, single source of truth,
+    // just rendered twice for the two presentations (3D vs. static fallback).
+    if (Array.isArray(process.steps)) {
+      const stageBlocks = document.querySelectorAll('#process3d-copy .process3d__stage');
+      stageBlocks.forEach((block, i) => {
+        const s = process.steps[i];
+        if (!s) return;
+        const titleEl = block.querySelector('[data-step-title]');
+        const bodyEl = block.querySelector('[data-step-body]');
+        if (titleEl) titleEl.textContent = s.title || '';
+        if (bodyEl) bodyEl.textContent = s.body || '';
+      });
+    }
   }
 }
 

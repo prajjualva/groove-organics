@@ -89,19 +89,92 @@
     </div>
     <div class="story__ring-wrap reveal">
       <svg class="story__ring" viewBox="0 0 200 200" fill="none">
-        <circle cx="100" cy="100" r="94" stroke="#C9A227" stroke-width="0.6" stroke-dasharray="2 6"/>
-        <circle cx="100" cy="100" r="72" stroke="#C9A227" stroke-width="0.6" stroke-dasharray="1 5" opacity="0.7"/>
-        <circle cx="100" cy="100" r="50" stroke="#FBF6EC" stroke-width="0.8" opacity="0.5"/>
-        <circle cx="100" cy="26" r="5" fill="#C9A227"/>
-        <circle cx="172" cy="130" r="4" fill="#B5551D"/>
-        <circle cx="40" cy="150" r="3.5" fill="#44573A"/>
+        <!-- Outer orbiting rings — slow, ambient motion, no strobing -->
+        <g class="story__ring-orbit">
+          <circle cx="100" cy="100" r="94" stroke="#C9A227" stroke-width="0.6" stroke-dasharray="2 6"/>
+          <circle cx="100" cy="26" r="4.5" fill="#C9A227"/>
+        </g>
+        <g class="story__ring-orbit story__ring-orbit--slow">
+          <circle cx="100" cy="100" r="72" stroke="#C9A227" stroke-width="0.6" stroke-dasharray="1 5" opacity="0.7"/>
+          <circle cx="172" cy="130" r="3.5" fill="#B5551D"/>
+          <circle cx="40" cy="150" r="3" fill="#44573A"/>
+        </g>
+        <!-- Static centerpiece: coconut cross-section with a leaf sprig and an oil drop,
+             line-art only (no fills beyond small accent shapes) so it reads at a glance
+             without looking like clip-art. -->
+        <circle cx="100" cy="100" r="50" stroke="#FBF6EC" stroke-width="0.8" opacity="0.4"/>
+        <g stroke="#FBF6EC" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" opacity="0.9">
+          <path d="M100 66c18 0 32 15.2 32 34s-14 34-32 34-32-15.2-32-34 14-34 32-34z"/>
+          <path d="M100 76c12.7 0 23 10.9 23 24s-10.3 24-23 24-23-10.9-23-24 10.3-24 23-24z" opacity="0.55"/>
+          <path d="M100 96c4.5 5.4 7 9.6 7 13a7 7 0 1 1-14 0c0-3.4 2.5-7.6 7-13z" fill="#C9A227" stroke="none" opacity="0.9"/>
+        </g>
+        <g stroke="#B5551D" stroke-width="1" stroke-linecap="round" opacity="0.75">
+          <path d="M60 58c10-8 22-9 30-2-6 9-18 13-30 2z"/>
+          <path d="M62 60l14 10"/>
+        </g>
       </svg>
     </div>
   </div>
 </section>
 
-<section class="section section--dark process">
-  <div class="container">
+<!--
+  "The Journey of the Oil" — scroll-driven Three.js scene (process3d.js).
+  Progressive enhancement: .process3d__scroller starts hidden (display:none
+  in CSS) and is only revealed by process3d.js once it has confirmed WebGL
+  support, a wide-enough viewport, and no prefers-reduced-motion — and only
+  once the section is actually near the viewport (lazy init). Everyone else
+  (no-JS, script blocked, small screens, reduced motion, low measured FPS)
+  sees the plain .process fallback rows below, which stay in the DOM either
+  way and are what admin content edits always update first.
+-->
+<section class="section section--dark process3d" id="process3d-section">
+  <div class="process3d__scroller" id="process3d-scroller">
+    <div class="process3d__viewport">
+      <canvas id="process3d-canvas" class="process3d__canvas" aria-hidden="true"></canvas>
+      <div class="process3d__scrim"></div>
+
+      <div class="process3d__stage-copy" id="process3d-copy">
+        <div class="process3d__stage is-active" data-stage="0">
+          <span class="mono process3d__stage-num">01</span>
+          <h3 data-step-title>Harvest</h3>
+          <p data-step-body>Coconuts hand-picked at peak ripeness from partner farms, milled within 24 hours of harvest so nothing sits and turns.</p>
+        </div>
+        <div class="process3d__stage" data-stage="1">
+          <span class="mono process3d__stage-num">02</span>
+          <h3 data-step-title>Wood-Press</h3>
+          <p data-step-body>The chekku/ghani wheel turns slowly for hours, staying below body temperature so the oil is never heat-stressed.</p>
+        </div>
+        <div class="process3d__stage" data-stage="2">
+          <span class="mono process3d__stage-num">03</span>
+          <h3 data-step-title>Settle &amp; Filter</h3>
+          <p data-step-body>Gravity-settled and cloth-filtered only — no centrifuge, no bleaching, no deodorizing.</p>
+        </div>
+        <div class="process3d__stage" data-stage="3">
+          <span class="mono process3d__stage-num">04</span>
+          <h3 data-step-title>Bottle</h3>
+          <p data-step-body>Hand-poured into reusable glass, labelled and sealed in small batches, ready to come home.</p>
+        </div>
+      </div>
+
+      <div class="process3d__lockup" id="process3d-lockup">
+        <span class="eyebrow mono">The Journey of the Oil</span>
+        <span class="process3d__lockup-line">From Earth.</span>
+        <span class="process3d__lockup-line">To Bottle.</span>
+        <a href="/shop" class="btn btn--primary">Explore Our Oils</a>
+      </div>
+
+      <div class="process3d__progress" id="process3d-progress" aria-hidden="true">
+        <span class="process3d__progress-dot is-active" data-dot="0"></span>
+        <span class="process3d__progress-dot" data-dot="1"></span>
+        <span class="process3d__progress-dot" data-dot="2"></span>
+        <span class="process3d__progress-dot" data-dot="3"></span>
+      </div>
+
+      <div class="process3d__tooltip" id="process3d-tooltip" hidden></div>
+    </div>
+  </div>
+
+  <div class="container" id="process-fallback">
     <span class="eyebrow reveal" id="process-eyebrow">From Farm to Bottle</span>
     <h2 class="reveal" id="process-title" style="max-width:600px;">Four steps. No shortcuts.</h2>
     <div style="margin-top:40px;" id="process-steps">
@@ -149,6 +222,7 @@
 <script src="/js/partials.js"></script>
 <script src="/js/products-render.js"></script>
 <script src="/js/hero3d.js" defer></script>
+<script src="/js/process3d.js" defer></script>
 <script src="/js/home-content.js"></script>
 <script src="/js/main.js"></script>
 </body>
