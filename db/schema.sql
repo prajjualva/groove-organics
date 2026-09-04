@@ -589,10 +589,10 @@ insert into public.site_content (key, value) values
     "eyebrow": "From Farm to Bottle",
     "title": "Four steps. No shortcuts.",
     "steps": [
-      {"title": "Harvest", "body": "Coconuts hand-picked at peak ripeness from partner farms, milled within 24 hours."},
-      {"title": "Wood-Press", "body": "Chekku/ghani wheel turns slowly, keeping the oil below body temperature."},
-      {"title": "Settle & Filter", "body": "Gravity-settled and cloth-filtered only — no centrifuge, no bleaching."},
-      {"title": "Bottle", "body": "Hand-poured into reusable glass, labelled and sealed in small batches."}
+      {"title": "Harvest", "body": "Coconuts hand-picked at peak ripeness from partner farms, milled within 24 hours of harvest so nothing sits and turns. Each farm is visited by our own team, not a broker."},
+      {"title": "Wood-Press", "body": "The chekku/ghani wheel turns slowly for hours, staying below body temperature so the oil is never heat-stressed — the same stone-and-wood method used for generations, just slower than any machine."},
+      {"title": "Settle & Filter", "body": "Gravity-settled overnight and cloth-filtered only — no centrifuge, no bleaching, no deodorizing. What''s left is exactly what the coconut gave us."},
+      {"title": "Bottle", "body": "Hand-poured into reusable glass, labelled and sealed in small batches so every bottle is checked by a person, not a line. Return the bottle and we''ll refill it."}
     ]
   }'::jsonb)
 on conflict (key) do nothing;
