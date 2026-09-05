@@ -22,6 +22,16 @@
       <div class="form-field"><label for="li-password">Password</label><input id="li-password" type="password" required /></div>
       <button class="btn btn--dark" type="submit" style="width:100%;">Sign In</button>
       <p class="form-error" id="login-error" style="display:none;"></p>
+      <p style="margin-top:12px;font-size:0.85rem;text-align:right;"><a href="#" id="forgot-password-link" style="text-decoration:underline;">Forgot password?</a></p>
+    </form>
+
+    <form id="forgot-password-form" style="display:none;">
+      <p style="font-size:0.85rem;color:var(--moss-700);margin-top:0;">Enter your account email and we'll send you a link to reset your password.</p>
+      <div class="form-field"><label for="fp-email">Email</label><input id="fp-email" type="email" required /></div>
+      <button class="btn btn--dark" type="submit" style="width:100%;">Send Reset Link</button>
+      <p class="form-error" id="forgot-password-error" style="display:none;"></p>
+      <p class="form-success" id="forgot-password-success" style="display:none;"></p>
+      <p style="margin-top:12px;font-size:0.85rem;"><a href="#" id="back-to-login-link" style="text-decoration:underline;">Back to sign in</a></p>
     </form>
 
     <form id="register-form" style="display:none;">
@@ -41,14 +51,54 @@
 const tabs = document.getElementById('auth-tabs');
 const loginForm = document.getElementById('login-form');
 const registerForm = document.getElementById('register-form');
+const forgotPasswordForm = document.getElementById('forgot-password-form');
 tabs.querySelectorAll('button').forEach((btn) => {
   btn.addEventListener('click', () => {
     tabs.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
+    tabs.style.display = '';
+    forgotPasswordForm.style.display = 'none';
     const mode = btn.getAttribute('data-mode');
     loginForm.style.display = mode === 'login' ? 'block' : 'none';
     registerForm.style.display = mode === 'register' ? 'block' : 'none';
   });
+});
+
+document.getElementById('forgot-password-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  tabs.style.display = 'none';
+  loginForm.style.display = 'none';
+  registerForm.style.display = 'none';
+  forgotPasswordForm.style.display = 'block';
+});
+
+document.getElementById('back-to-login-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  forgotPasswordForm.style.display = 'none';
+  tabs.style.display = '';
+  tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.getAttribute('data-mode') === 'login'));
+  loginForm.style.display = 'block';
+});
+
+document.getElementById('forgot-password-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('forgot-password-error');
+  const successEl = document.getElementById('forgot-password-success');
+  errorEl.style.display = 'none';
+  successEl.style.display = 'none';
+  try {
+    const result = await api('/api/auth/forgot-password', {
+      method: 'POST',
+      auth: false,
+      body: { email: document.getElementById('fp-email').value },
+    });
+    successEl.textContent = result.message || "If an account exists for that email, we've sent a reset link.";
+    successEl.style.display = 'block';
+    e.target.querySelector('button[type="submit"]').disabled = true;
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+  }
 });
 
 async function afterAuth(token, user) {

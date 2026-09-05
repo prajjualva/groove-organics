@@ -74,4 +74,16 @@ async function sendOrderShippedEmail(order) {
   return sendEmail({ to: order.customer_email, subject: `Order shipped — ${order.order_number}`, html });
 }
 
-module.exports = { isConfigured, sendEmail, sendOrderConfirmedEmail, sendOrderShippedEmail };
+async function sendPasswordResetEmail(email, actionLink) {
+  const html = `
+    <h2>Reset your password</h2>
+    <p>Someone (hopefully you) asked to reset the password on the Groove Organics account for ${email}.</p>
+    <p><a href="${actionLink}" style="display:inline-block;background:#1b2416;color:#fbf6ec;padding:12px 22px;border-radius:6px;text-decoration:none;">Reset Password</a></p>
+    <p>If the button doesn't work, copy and paste this link into your browser:<br />${actionLink}</p>
+    <p>If you didn't ask for this, you can safely ignore this email — your password won't change.</p>
+    <p>— Groove Organics</p>
+  `;
+  return sendEmail({ to: email, subject: 'Reset your Groove Organics password', html });
+}
+
+module.exports = { isConfigured, sendEmail, sendOrderConfirmedEmail, sendOrderShippedEmail, sendPasswordResetEmail };

@@ -25,4 +25,12 @@ module.exports = {
   supabase: client,
   supabaseAdmin: adminClient,
   isConfigured: Boolean(client),
+  // The URL + anon key are meant to be public (Supabase's own docs ship them
+  // in client-side bundles — access is controlled by RLS, not by keeping
+  // these secret). Exposed via /api/status so the browser can make a couple
+  // of narrow, unauthenticated Supabase Auth REST calls itself — right now
+  // just completing a password-reset link — without a bundler or the full
+  // supabase-js SDK. The service role key is never exported from here.
+  supabaseUrl: url || null,
+  supabaseAnonKey: anonKey || null,
 };

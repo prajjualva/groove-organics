@@ -1,6 +1,7 @@
 const express = require('express');
-const { supabase, isConfigured } = require('../lib/supabase');
+const { supabase, supabaseAdmin, isConfigured } = require('../lib/supabase');
 const mock = require('../lib/mockStore');
+const email = require('../lib/email');
 
 const router = express.Router();
 
@@ -79,6 +80,82 @@ router.post('/logout', async (req, res) => {
 router.get('/me', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not signed in.' });
   res.json({ user: req.user, mode: isConfigured ? 'supabase' : 'demo' });
+});
+
+// POST /api/auth/forgot-password  { email } -> { ok: true }
+// Public and unauthenticated — hit from the "Forgot password?" link on the
+// sign-in page, and reused as-is by the admin Customers tab's "Send reset
+// link" button (an admin already knows the address is real; the response
+// just doesn't need to say so out loud).
+//
+// Always answers with the same generic message whether or not the address
+// has an account — a reset-password form that confirms/denies an email
+// exists is a standard account-enumeration leak.
+router.post('/forgot-password', async (req, res) => {
+  const targetEmail = ((req.body || {}).email || '').trim().toLowerCase();
+  const genericResponse = { ok: true, message: 'If an account exists for that email, a password reset link is on its way.' };
+  if (!targetEmail) return res.status(400).json({ error: 'Email is required.' });
+
+  const origin = process.env.FRONTEND_ORIGIN || `${req.protocol}://${req.get('host')}`;
+  const redirectTo = `${origin}/reset-password`;
+
+  try {
+    if (isConfigured) {
+      if (!supabaseAdmin) {
+        console.error('[auth] forgot-password needs SUPABASE_SERVICE_ROLE_KEY set (admin API access) — see backend/.env.');
+        return res.json(genericResponse);
+      }
+      // generateLink both checks the account exists and mints the one-time
+      // recovery link — Supabase never emails it for us here, so we send it
+      // ourselves via Resend (same email provider as the rest of the site).
+      const { data, error: genError } = await supabaseAdmin.auth.admin.generateLink({
+        type: 'recovery',
+        email: targetEmail,
+        options: { redirectTo },
+      });
+      if (genError) {
+        console.error('[auth] generateLink failed:', genError.message);
+        return res.json(genericResponse); // most commonly "user not found" — never leak that
+      }
+      const actionLink = data && data.properties && data.properties.action_link;
+      if (actionLink) {
+        email.sendPasswordResetEmail(targetEmail, actionLink).catch((err) => console.error('sendPasswordResetEmail failed:', err.message));
+      }
+      return res.json(genericResponse);
+    }
+
+    // Demo mode: no real Supabase Auth to generate a recovery link from, so
+    // mint our own short-lived token and point the email at our own
+    // reset-password-demo endpoint instead of Supabase's.
+    const user = mock.findUserByEmail(targetEmail);
+    if (user) {
+      const token = mock.createPasswordResetToken(targetEmail);
+      const demoLink = `${redirectTo}?demo=1&token=${token}`;
+      email.sendPasswordResetEmail(targetEmail, demoLink).catch((err) => console.error('sendPasswordResetEmail failed:', err.message));
+    }
+    return res.json(genericResponse);
+  } catch (err) {
+    console.error('[auth] forgot-password error:', err.message);
+    return res.json(genericResponse);
+  }
+});
+
+// POST /api/auth/reset-password-demo  { token, password } -> { ok: true }
+// Demo-mode-only stand-in for completing a reset. In real Supabase mode,
+// reset-password.html completes the reset by calling Supabase's own
+// /auth/v1/user REST endpoint directly with the recovery token from the
+// email link — it never calls this route at all.
+router.post('/reset-password-demo', async (req, res) => {
+  if (isConfigured) {
+    return res.status(400).json({ error: 'This server is using real Supabase auth — the reset link should complete the reset with Supabase directly.' });
+  }
+  const { token, password } = req.body || {};
+  if (!token || !password) return res.status(400).json({ error: 'token and password are required.' });
+  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  const emailForToken = mock.consumePasswordResetToken(token);
+  if (!emailForToken) return res.status(400).json({ error: 'This reset link is invalid or has expired — request a new one.' });
+  mock.setUserPassword(emailForToken, password);
+  res.json({ ok: true });
 });
 
 module.exports = router;

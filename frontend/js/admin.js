@@ -490,6 +490,80 @@ async function renderCategoriesTab() {
   });
 }
 
+// Customer directory: every account (customer/staff/admin), with order
+// count and paid-order spend joined in client-side from /api/orders — same
+// pattern as the Reports tab's low-stock/best-seller widgets, rather than
+// teaching the backend a new aggregate query for one admin screen.
+async function renderCustomersTab() {
+  const wrap = document.getElementById('tab-content');
+  wrap.innerHTML = '<p>Loading customers…</p>';
+  const [{ customers }, { orders }, status] = await Promise.all([
+    api('/api/customers'),
+    api('/api/orders'),
+    api('/api/status', { auth: false }),
+  ]);
+
+  const statsByEmail = {};
+  orders.forEach((o) => {
+    const key = (o.customer_email || '').toLowerCase();
+    if (!key) return;
+    if (!statsByEmail[key]) statsByEmail[key] = { count: 0, spendPaise: 0 };
+    statsByEmail[key].count += 1;
+    if (o.payment_status === 'paid') statsByEmail[key].spendPaise += o.total_paise;
+  });
+
+  const resetNote = status.supabaseConfigured
+    ? "\"Send reset link\" emails the customer a real Supabase password-reset link via Resend."
+    : "Demo mode: \"Send reset link\" mints a temporary local reset link (there's no real Supabase account yet) — check the server console if Resend isn't configured, the link is logged there instead of emailed.";
+
+  wrap.innerHTML = `
+    <p style="font-size:0.85rem;color:var(--moss-700);margin-top:0;">${resetNote} There's no way to view or set a customer's actual password here — or anywhere else — on purpose; this only ever sends them a link to set a new one themselves.</p>
+    <div class="card">
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th>Orders</th><th>Spent</th><th></th></tr></thead>
+        <tbody>
+          ${
+            customers.length
+              ? customers
+                  .map((c) => {
+                    const stats = statsByEmail[(c.email || '').toLowerCase()] || { count: 0, spendPaise: 0 };
+                    return `
+                    <tr data-customer-email="${c.email}">
+                      <td>${c.full_name || '—'}</td>
+                      <td>${c.email}</td>
+                      <td><span class="status-pill status-${c.role === 'admin' ? 'delivered' : c.role === 'staff' ? 'shipped' : 'placed'}">${c.role}</span></td>
+                      <td>${c.created_at ? new Date(c.created_at).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
+                      <td>${stats.count}</td>
+                      <td class="mono">${formatRupees(stats.spendPaise)}</td>
+                      <td><button class="btn btn--outline btn--sm" data-send-reset="${c.email}">Send reset link</button></td>
+                    </tr>`;
+                  })
+                  .join('')
+              : '<tr><td colspan="7" style="color:var(--moss-700);">No customers yet.</td></tr>'
+          }
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  wrap.querySelectorAll('[data-send-reset]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const email = btn.getAttribute('data-send-reset');
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = 'Sending…';
+      try {
+        await api('/api/auth/forgot-password', { method: 'POST', auth: false, body: { email } });
+        btn.textContent = 'Sent';
+      } catch (err) {
+        btn.textContent = originalLabel;
+        btn.disabled = false;
+        alert(err.message || 'Could not send the reset link.');
+      }
+    });
+  });
+}
+
 async function renderOrdersTab() {
   const wrap = document.getElementById('tab-content');
   wrap.innerHTML = '<p>Loading orders…</p>';
@@ -1217,6 +1291,7 @@ const TAB_RENDERERS = {
   products: renderProductsTab,
   categories: renderCategoriesTab,
   orders: renderOrdersTab,
+  customers: renderCustomersTab,
   banners: renderBannersTab,
   content: renderContentTab,
   legal: renderLegalTab,

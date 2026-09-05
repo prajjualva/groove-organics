@@ -160,6 +160,36 @@ async function deleteProduct(id) {
   return true;
 }
 
+// Every logged-in account (customers, plus staff/admin, role included so
+// the admin UI can badge them) for the admin "Customers" tab. Order counts
+// and spend aren't joined in here — the caller already has /api/orders
+// loaded for the Reports tab and can match on email, same as that tab does.
+async function listCustomers() {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Customer visibility needs SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data: userPage, error: userError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
+    if (userError) throw userError;
+    const users = userPage?.users || [];
+    const { data: profileRows, error: profileError } = await supabaseAdmin.from('profiles').select('id, role, full_name');
+    if (profileError) throw profileError;
+    const profileById = new Map((profileRows || []).map((p) => [p.id, p]));
+    return users
+      .map((u) => {
+        const profile = profileById.get(u.id);
+        return {
+          id: u.id,
+          email: u.email,
+          full_name: profile?.full_name || u.user_metadata?.full_name || null,
+          role: profile?.role || 'customer',
+          created_at: u.created_at,
+          last_sign_in_at: u.last_sign_in_at || null,
+        };
+      })
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  }
+  return mock.listAllUsers().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+}
+
 async function listOrders() {
   if (isConfigured) {
     if (!supabaseAdmin) throw new Error('Order visibility needs SUPABASE_SERVICE_ROLE_KEY set.');
@@ -1214,4 +1244,5 @@ module.exports = {
   earnLoyaltyPoints,
   previewLoyaltyRedemption,
   redeemLoyaltyPoints,
+  listCustomers,
 };

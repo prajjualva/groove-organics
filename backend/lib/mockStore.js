@@ -236,9 +236,57 @@ function findUserByEmail(email) {
 
 function registerCustomer({ email, password, full_name }) {
   if (findUserByEmail(email)) return null; // already exists
-  const user = { id: `cust_${Date.now()}`, email, password, role: 'customer', full_name: full_name || null };
+  const user = {
+    id: `cust_${Date.now()}`,
+    email,
+    password,
+    role: 'customer',
+    full_name: full_name || null,
+    created_at: new Date().toISOString(),
+  };
   customerUsers.push(user);
   return user;
+}
+
+// Everyone with a login — demo admin/staff plus self-registered demo
+// customers — for the admin "Customers" tab in demo mode. Never includes
+// the password field; that's the whole point of this separate list.
+function listAllUsers() {
+  return [...demoUsers, ...customerUsers].map((u) => ({
+    id: u.id,
+    email: u.email,
+    full_name: u.full_name,
+    role: u.role,
+    created_at: u.created_at || null,
+  }));
+}
+
+function setUserPassword(email, newPassword) {
+  const user = findUserByEmail(email);
+  if (!user) return false;
+  user.password = newPassword;
+  return true;
+}
+
+// Demo-mode stand-in for Supabase's real recovery-link flow: a short-lived
+// random token mapped to the email it's for. Real Supabase mode never uses
+// this — it emails a genuine Supabase recovery link instead (see
+// dataStore.requestPasswordReset).
+const passwordResetTokens = new Map(); // token -> { email, expiresAt }
+const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function createPasswordResetToken(email) {
+  const token = crypto.randomBytes(24).toString('hex');
+  passwordResetTokens.set(token, { email, expiresAt: Date.now() + PASSWORD_RESET_TTL_MS });
+  return token;
+}
+
+function consumePasswordResetToken(token) {
+  const entry = passwordResetTokens.get(token);
+  if (!entry) return null;
+  passwordResetTokens.delete(token);
+  if (entry.expiresAt < Date.now()) return null;
+  return entry.email;
 }
 
 // token -> { userId, role, email, full_name }
@@ -288,6 +336,10 @@ module.exports = {
   customerUsers,
   findUserByEmail,
   registerCustomer,
+  listAllUsers,
+  setUserPassword,
+  createPasswordResetToken,
+  consumePasswordResetToken,
   createSession,
   getSession,
   destroySession,

@@ -11,6 +11,7 @@ const paymentRoutes = require('./routes/payments');
 const invoiceRoutes = require('./routes/invoice');
 const miscRoutes = require('./routes/misc');
 const customerRoutes = require('./routes/customer');
+const customersRoutes = require('./routes/customers'); // admin/staff "Customers" tab (plural — distinct from the self-service /api/customer above)
 const reviewRoutes = require('./routes/reviews');
 const categoryRoutes = require('./routes/categories');
 const contentRoutes = require('./routes/content');
@@ -18,7 +19,7 @@ const variantRoutes = require('./routes/variants');
 const couponRoutes = require('./routes/coupons');
 const shippingRoutes = require('./routes/shipping');
 const loyaltyRoutes = require('./routes/loyalty');
-const { isConfigured: supabaseConfigured } = require('./lib/supabase');
+const { isConfigured: supabaseConfigured, supabaseUrl, supabaseAnonKey } = require('./lib/supabase');
 const { isConfigured: razorpayConfigured } = require('./lib/razorpay');
 
 const app = express();
@@ -39,6 +40,7 @@ app.use('/api/orders', invoiceRoutes); // adds GET /api/orders/:id/invoice
 app.use('/api/payments', paymentRoutes);
 app.use('/api', miscRoutes); // /api/newsletter, /api/contact, /api/banners
 app.use('/api/customer', customerRoutes); // addresses, order history, wishlist
+app.use('/api/customers', customersRoutes); // admin/staff-only customer directory
 app.use('/api', reviewRoutes); // /api/products/:slug/reviews, /api/reviews/:id
 app.use('/api/categories', categoryRoutes);
 app.use('/api/content', contentRoutes);
@@ -84,6 +86,15 @@ app.get('/api/status', (req, res) => {
     // gst_rate_percent override — lets the frontend show an accurate
     // estimate before checkout without hardcoding "5%" everywhere.
     defaultGstRatePercent: Number(process.env.GST_RATE_PERCENT || 5),
+    // Public by design (Supabase's URL + anon key are meant to ship in
+    // client-side code; RLS is what actually protects data, not secrecy of
+    // these two values). reset-password.html uses them to complete a
+    // password reset with a couple of narrow, unauthenticated Supabase Auth
+    // REST calls — no bundler or supabase-js SDK needed for that one page.
+    // null when Supabase isn't configured; the service role key is never
+    // exposed here or anywhere else in an API response.
+    supabaseUrl: supabaseConfigured ? supabaseUrl : null,
+    supabaseAnonKey: supabaseConfigured ? supabaseAnonKey : null,
   });
 });
 
@@ -118,6 +129,7 @@ const pageRoutes = {
   '/account': 'account/index.html',
   '/account/dashboard': 'account/dashboard.html',
   '/wishlist': 'account/dashboard.html',
+  '/reset-password': 'reset-password.html',
 };
 Object.entries(pageRoutes).forEach(([route, file]) => {
   app.get(route, (req, res) => res.sendFile(path.join(frontendDir, file)));
