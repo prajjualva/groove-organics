@@ -250,6 +250,19 @@ a { color: inherit; text-decoration: none; }
 }
 @keyframes scrollcue { 0%,100% { opacity: 0.2; } 50% { opacity: 0.9; } }
 
+/* .hero__content's 160px/120px top/bottom padding is sized for a big desktop
+   hero and had no mobile override — combined with the headline/lede/CTA
+   stack, that pushed the whole .hero section (which only has a min-height,
+   so it grows to fit content) to 2-3x a phone's screen height. The single
+   background image then had to stretch cover that oversized box, so
+   scrolling through it looked like several near-identical banners stacked
+   instead of one hero. Cutting the padding way down here is what actually
+   fixes that — the image only needs to cover one screen's worth of height. */
+@media (max-width: 760px) {
+  .hero__content { padding: 112px 20px 64px; }
+  .hero__ctas { margin-top: 24px; }
+}
+
 /* =====================================================================
    Scroll-reveal
    ===================================================================== */
@@ -293,6 +306,7 @@ a { color: inherit; text-decoration: none; }
   text-decoration: none;
   color: var(--cream);
   box-shadow: var(--shadow-card);
+  background: var(--moss-900); /* shows through as letterboxing when a mobile view uses background-size:contain */
 }
 .promo-card__image {
   position: absolute; inset: 0;
@@ -300,9 +314,17 @@ a { color: inherit; text-decoration: none; }
   background-size: cover; background-position: center;
   transition: transform 0.5s ease;
 }
-/* Same desktop/mobile-crop switch as .hero__slide above. */
+/* Same desktop/mobile-crop switch as .hero__slide above. --bg-mobile-fit is
+   "cover" when a banner has its own mobile image (fill edge-to-edge, safe to
+   crop since it was chosen for this), or "contain" when it's just the
+   desktop photo reused (shrink to fit whole, never crop — the empty strip
+   this can leave top/bottom is filled by each element's own background
+   color set below, not left blank). */
 @media (max-width: 760px) {
-  .hero__slide, .promo-card__image { background-image: var(--bg-mobile, var(--bg-desktop)); }
+  .hero__slide, .promo-card__image {
+    background-image: var(--bg-mobile, var(--bg-desktop));
+    background-size: var(--bg-mobile-fit, cover);
+  }
 }
 .promo-card:hover .promo-card__image { transform: scale(1.06); }
 .promo-card::after {
