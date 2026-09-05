@@ -36,13 +36,25 @@
   const clayMat = new THREE.MeshStandardMaterial({ color: 0xb5551d, roughness: 0.5, metalness: 0.1 });
   const mossMat = new THREE.MeshStandardMaterial({ color: 0x44573a, roughness: 0.6, metalness: 0.05 });
 
-  // "Ingredient" shapes: seed pod (capsule), berry (sphere), grain nugget (icosahedron)
+  // "Ingredient" shapes: seed pod (cylinder), berry (sphere), grain nugget (icosahedron).
+  // Was THREE.CapsuleGeometry, which only exists from Three.js r142 onward —
+  // this page pins r128 (see the <script> tag in index.html), so that
+  // constructor was undefined and threw "not a constructor" the instant this
+  // function ran, crashing the whole 3D fallback scene before it ever drew a
+  // frame. Harmless on a normal page load (the real photo slider covers the
+  // canvas and hides the failure), but on any load where the banner/content
+  // API call is slow or fails — e.g. Render's free tier waking from a cold
+  // start — this fallback is exactly what's supposed to cover that gap, and
+  // instead users saw a blank canvas. CylinderGeometry has been in Three.js
+  // since the beginning, so it's a safe drop-in (a plain-ended cylinder
+  // instead of a rounded-cap capsule — a barely-noticeable cosmetic
+  // difference on a small floating background ornament).
   const shapes = [
-    { mesh: new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 1, 4, 8), goldMat), radius: 4.2, speed: 0.09, tilt: 0.3, phase: 0 },
+    { mesh: new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1, 8), goldMat), radius: 4.2, speed: 0.09, tilt: 0.3, phase: 0 },
     { mesh: new THREE.Mesh(new THREE.SphereGeometry(0.45, 16, 16), clayMat), radius: 3.1, speed: -0.13, tilt: -0.4, phase: 2 },
     { mesh: new THREE.Mesh(new THREE.IcosahedronGeometry(0.4, 0), mossMat), radius: 5.2, speed: 0.07, tilt: 0.15, phase: 4 },
     { mesh: new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12), goldMat), radius: 2.2, speed: -0.17, tilt: 0.5, phase: 1 },
-    { mesh: new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.6, 4, 8), clayMat), radius: 4.8, speed: 0.1, tilt: -0.2, phase: 3 },
+    { mesh: new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.6, 8), clayMat), radius: 4.8, speed: 0.1, tilt: -0.2, phase: 3 },
   ];
   shapes.forEach((s) => scene.add(s.mesh));
 
