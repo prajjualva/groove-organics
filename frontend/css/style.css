@@ -180,6 +180,18 @@ a { color: inherit; text-decoration: none; }
   .nav__toggle { display: inline-flex; }
 }
 
+/* Compact mobile header (~60px tall) — MOBILE HERO REDESIGN spec, section 1.
+   Keeps the logo small and the tagline hidden so the header never eats into
+   the hero's vertical space on a phone. */
+@media (max-width: 768px) {
+  .nav { padding: 12px 0; }
+  .nav.scrolled { padding: 10px 0; }
+  .nav__brand svg, .nav__brand .brand-logo { width: 26px; height: 26px; }
+  .nav__brand { font-size: 1rem; gap: 8px; }
+  .nav__tagline { display: none; }
+  .nav__icons { gap: 12px; }
+}
+
 /* =====================================================================
    Hero
    ===================================================================== */
@@ -250,17 +262,40 @@ a { color: inherit; text-decoration: none; }
 }
 @keyframes scrollcue { 0%,100% { opacity: 0.2; } 50% { opacity: 0.9; } }
 
-/* .hero__content's 160px/120px top/bottom padding is sized for a big desktop
-   hero and had no mobile override — combined with the headline/lede/CTA
-   stack, that pushed the whole .hero section (which only has a min-height,
-   so it grows to fit content) to 2-3x a phone's screen height. The single
-   background image then had to stretch cover that oversized box, so
-   scrolling through it looked like several near-identical banners stacked
-   instead of one hero. Cutting the padding way down here is what actually
-   fixes that — the image only needs to cover one screen's worth of height. */
-@media (max-width: 760px) {
-  .hero__content { padding: 112px 20px 64px; }
-  .hero__ctas { margin-top: 24px; }
+/* Mobile-only single CTA (see index.html) — a sibling of #hero-ctas, not a
+   child, so the CMS content loader (home-content.js) never wipes it out
+   when it rewrites #hero-ctas's innerHTML. Hidden on desktop; shown below
+   760px, where it replaces the two-button #hero-ctas row entirely. */
+.hero__cta-mobile { display: none; }
+
+/* MOBILE HERO REDESIGN — a purpose-built mobile composition, not the desktop
+   hero shrunk down. Desktop above (100vh, vertically-centered content, wide
+   16:9 background) is untouched. Below 760px:
+   - the hero switches to a dedicated 9:16 mobile image (--bg-mobile) whose
+     product sits only in the bottom ~46% of the frame, so content is
+     top-aligned instead of vertically centered, keeping text in the clean
+     dark-green space above the bottles;
+   - text is narrower and smaller so it never collides with the product;
+   - the two desktop CTAs are replaced by the single .hero__cta-mobile;
+   - the "Scroll" cue is removed in favor of the (already dot-based) slider
+     indicator, recentred and shrunk to read as "subtle" on a small screen. */
+@media (max-width: 768px) {
+  .hero { align-items: flex-start; }
+  .hero__content {
+    padding: 84px 20px 0;
+    max-width: 320px;
+  }
+  .hero__tagline { font-size: 0.68rem; margin-bottom: 12px; }
+  .hero h1 { font-size: clamp(1.75rem, 8vw, 2.3rem); line-height: 1.18; }
+  .hero__lede { font-size: 0.94rem; max-width: 280px; opacity: 0.85; margin-top: 10px; }
+  .hero__ctas { display: none; }
+  .hero__cta-mobile { display: inline-flex; margin-top: 22px; }
+  .hero__scroll-cue { display: none; }
+  .hero__slider-dots {
+    left: 50%; right: auto; transform: translateX(-50%);
+    bottom: 18px; gap: 8px;
+  }
+  .hero__slider-dot { width: 7px; height: 7px; }
 }
 
 /* =====================================================================
@@ -285,7 +320,7 @@ a { color: inherit; text-decoration: none; }
 }
 .feature-strip__item h4 { font-family: var(--font-body); font-size: 0.95rem; font-weight: 700; margin-bottom: 4px; color: var(--moss-900); }
 .feature-strip__item p { font-size: 0.85rem; color: var(--moss-700); margin: 0; }
-@media (max-width: 760px) {
+@media (max-width: 768px) {
   .feature-strip { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -320,7 +355,7 @@ a { color: inherit; text-decoration: none; }
    desktop photo reused (shrink to fit whole, never crop — the empty strip
    this can leave top/bottom is filled by each element's own background
    color set below, not left blank). */
-@media (max-width: 760px) {
+@media (max-width: 768px) {
   .hero__slide, .promo-card__image {
     background-image: var(--bg-mobile, var(--bg-desktop));
     background-size: var(--bg-mobile-fit, cover);
@@ -587,6 +622,7 @@ a { color: inherit; text-decoration: none; }
   padding: 72px 0 32px;
 }
 .footer__top { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.2fr; gap: 48px; margin-bottom: 56px; }
+.footer__col { min-width: 0; }
 .footer__brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-size: 1.2rem; margin-bottom: 12px; }
 .footer__brand svg, .footer__brand .brand-logo { width: 30px; height: 30px; object-fit: contain; }
 .footer p.muted, .footer__col p { opacity: 0.7; font-size: 0.9rem; }
@@ -595,13 +631,22 @@ a { color: inherit; text-decoration: none; }
 .footer__col a:hover { color: var(--gold-500); }
 .footer__newsletter-form { display: flex; gap: 8px; margin-top: 14px; }
 .footer__newsletter-form input {
-  flex: 1; padding: 11px 14px; border-radius: 999px; border: 1px solid rgba(251,246,236,0.25);
+  flex: 1; min-width: 0; padding: 11px 14px; border-radius: 999px; border: 1px solid rgba(251,246,236,0.25);
   background: rgba(251,246,236,0.06); color: var(--cream); font-family: var(--font-body);
 }
 .footer__newsletter-form input::placeholder { color: rgba(251,246,236,0.5); }
 .footer__bottom { border-top: 1px solid rgba(251,246,236,0.14); padding-top: 24px; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; opacity: 0.6; flex-wrap: wrap; gap: 12px; }
 @media (max-width: 860px) {
   .footer__top { grid-template-columns: 1fr 1fr; }
+}
+/* Pre-existing bug (unrelated to the hero redesign, found while testing the
+   same 320-768px range the hero spec calls for): grid columns don't shrink
+   below their content's intrinsic width by default, so the newsletter
+   input/button pair forced the whole footer wider than the viewport on
+   narrow phones. min-width:0 above lets the column shrink normally; below
+   480px there's no room for two columns at all, so stack to one. */
+@media (max-width: 480px) {
+  .footer__top { grid-template-columns: 1fr; }
 }
 
 /* =====================================================================

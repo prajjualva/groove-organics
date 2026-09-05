@@ -27,6 +27,11 @@
       <a href="/shop" class="btn btn--primary">Shop Now</a>
       <a href="/about" class="btn btn--outline">Our Farms</a>
     </div>
+    <!-- Mobile-only single CTA. Deliberately a sibling of #hero-ctas (not a
+         child) so home-content.js's CMS-driven innerHTML rewrite of
+         #hero-ctas never wipes it out. Hidden on desktop, shown <=760px
+         via style.css; #hero-ctas is hidden at that width instead. -->
+    <a href="/shop" class="btn btn--primary hero__cta-mobile">Shop Our Oils →</a>
   </div>
   <div class="hero__slider-dots" id="hero-slider-dots"></div>
   <div class="hero__scroll-cue"><span>Scroll</span><span></span></div>
@@ -226,8 +231,8 @@
       <h3 class="mt-0">Get 10% off your first order</h3>
       <p style="margin:0;color:var(--moss-700);">Join our newsletter for new-oil launches and small-batch drops.</p>
     </div>
-    <form class="stack" style="flex-direction:row;gap:8px;" id="home-newsletter-form">
-      <input type="email" required placeholder="you@email.com" style="padding:12px 14px;border-radius:999px;border:1px solid var(--sand-300);min-width:220px;" />
+    <form class="stack" style="flex-direction:row;gap:8px;flex-wrap:wrap;" id="home-newsletter-form">
+      <input type="email" required placeholder="you@email.com" style="flex:1 1 200px;min-width:0;padding:12px 14px;border-radius:999px;border:1px solid var(--sand-300);" />
       <button class="btn btn--primary" type="submit">Join</button>
     </form>
   </div>
