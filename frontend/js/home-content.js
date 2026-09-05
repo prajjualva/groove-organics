@@ -44,10 +44,25 @@ async function loadHeroSlider() {
   // 3D scene so the two don't fight each other.
   if (canvas) canvas.style.display = 'none';
 
+  // Each banner can optionally carry a separate image_url_mobile (set from
+  // Admin → Banners) for a crop that isn't just the desktop photo squeezed
+  // into a tall narrow box — background-size:cover on a landscape photo
+  // full of baked-in text looked cropped/overlapping on phones otherwise.
+  // The two URLs go in as CSS custom properties; the actual switch between
+  // them happens in style.css's max-width:760px media query, so it also
+  // responds correctly to rotation/resize with no JS involved.
   slider.innerHTML = banners
-    .map(
-      (b, i) => `<div class="hero__slide ${i === 0 ? 'is-active' : ''}" style="background-image:url('${b.image_url}')" data-slide="${i}"></div>`
-    )
+    .map((b, i) => {
+      const desktopUrl = `url('${b.image_url}')`;
+      const hasMobileImage = Boolean(b.image_url_mobile);
+      const mobileUrl = hasMobileImage ? `url('${b.image_url_mobile}')` : desktopUrl;
+      // No dedicated mobile crop uploaded? Fit the whole desktop photo inside
+      // the box on phones instead of cropping it to fill — nothing gets cut
+      // off or overlaps, it just doesn't stretch edge-to-edge. A banner with
+      // its own mobile image keeps the edge-to-edge cover look.
+      const mobileFit = hasMobileImage ? 'cover' : 'contain';
+      return `<div class="hero__slide ${i === 0 ? 'is-active' : ''}" style="--bg-desktop:${desktopUrl};--bg-mobile:${mobileUrl};--bg-mobile-fit:${mobileFit}" data-slide="${i}"></div>`;
+    })
     .join('');
 
   if (banners.length > 1 && dotsWrap) {
@@ -199,16 +214,20 @@ async function loadPromoBanners() {
     const { banners } = await api('/api/banners?placement=homepage_promo', { auth: false });
     if (!banners || !banners.length) return;
     grid.innerHTML = banners
-      .map(
-        (b) => `
+      .map((b) => {
+        const desktopUrl = `url('${b.image_url}')`;
+        const hasMobileImage = Boolean(b.image_url_mobile);
+        const mobileUrl = hasMobileImage ? `url('${b.image_url_mobile}')` : desktopUrl;
+        const mobileFit = hasMobileImage ? 'cover' : 'contain';
+        return `
         <a class="promo-card" href="${b.link_url || '#'}">
-          <div class="promo-card__image" style="background-image:url('${b.image_url}')"></div>
+          <div class="promo-card__image" style="--bg-desktop:${desktopUrl};--bg-mobile:${mobileUrl};--bg-mobile-fit:${mobileFit}"></div>
           <div class="promo-card__text">
             ${b.title ? `<h4>${escapeHtml(b.title)}</h4>` : ''}
             ${b.subtitle ? `<p>${escapeHtml(b.subtitle)}</p>` : ''}
           </div>
-        </a>`
-      )
+        </a>`;
+      })
       .join('');
     section.style.display = '';
   } catch (err) {

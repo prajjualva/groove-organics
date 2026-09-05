@@ -200,8 +200,18 @@ a { color: inherit; text-decoration: none; }
    set from the dashboard's Banners tab (placement: Homepage Hero). Sits
    above the Three.js canvas fallback, below the scrim + text. */
 .hero__slider { position: absolute; inset: 0; z-index: 1; }
+/* Each slide carries both a desktop and (optional) mobile crop as CSS custom
+   properties (set from home-content.js) — the media query below is what
+   actually switches between them, so resizing/rotating the device just
+   works with no JS resize listener needed. --bg-mobile falls back to
+   --bg-desktop when a banner has no separate mobile image set, so this is
+   safe for banners that only ever had one image. This replaced a single
+   background-size:cover image, which on a tall narrow phone screen cropped
+   hard into the sides of a landscape photo — cutting off or shifting any
+   text baked into the image instead of just resizing it. */
 .hero__slide {
   position: absolute; inset: 0;
+  background-image: var(--bg-desktop);
   background-size: cover; background-position: center;
   opacity: 0; transition: opacity 1.2s ease;
 }
@@ -283,11 +293,25 @@ a { color: inherit; text-decoration: none; }
   text-decoration: none;
   color: var(--cream);
   box-shadow: var(--shadow-card);
+  background: var(--moss-900); /* shows through as letterboxing when a mobile view uses background-size:contain */
 }
 .promo-card__image {
   position: absolute; inset: 0;
+  background-image: var(--bg-desktop);
   background-size: cover; background-position: center;
   transition: transform 0.5s ease;
+}
+/* Same desktop/mobile-crop switch as .hero__slide above. --bg-mobile-fit is
+   "cover" when a banner has its own mobile image (fill edge-to-edge, safe to
+   crop since it was chosen for this), or "contain" when it's just the
+   desktop photo reused (shrink to fit whole, never crop — the empty strip
+   this can leave top/bottom is filled by each element's own background
+   color set below, not left blank). */
+@media (max-width: 760px) {
+  .hero__slide, .promo-card__image {
+    background-image: var(--bg-mobile, var(--bg-desktop));
+    background-size: var(--bg-mobile-fit, cover);
+  }
 }
 .promo-card:hover .promo-card__image { transform: scale(1.06); }
 .promo-card::after {
