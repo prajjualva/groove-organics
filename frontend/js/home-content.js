@@ -54,14 +54,8 @@ async function loadHeroSlider() {
   slider.innerHTML = banners
     .map((b, i) => {
       const desktopUrl = `url('${b.image_url}')`;
-      const hasMobileImage = Boolean(b.image_url_mobile);
-      const mobileUrl = hasMobileImage ? `url('${b.image_url_mobile}')` : desktopUrl;
-      // No dedicated mobile crop uploaded? Fit the whole desktop photo inside
-      // the box on phones instead of cropping it to fill — nothing gets cut
-      // off or overlaps, it just doesn't stretch edge-to-edge. A banner with
-      // its own mobile image keeps the edge-to-edge cover look.
-      const mobileFit = hasMobileImage ? 'cover' : 'contain';
-      return `<div class="hero__slide ${i === 0 ? 'is-active' : ''}" style="--bg-desktop:${desktopUrl};--bg-mobile:${mobileUrl};--bg-mobile-fit:${mobileFit}" data-slide="${i}"></div>`;
+      const mobileUrl = b.image_url_mobile ? `url('${b.image_url_mobile}')` : desktopUrl;
+      return `<div class="hero__slide ${i === 0 ? 'is-active' : ''}" style="--bg-desktop:${desktopUrl};--bg-mobile:${mobileUrl}" data-slide="${i}"></div>`;
     })
     .join('');
 
@@ -216,12 +210,10 @@ async function loadPromoBanners() {
     grid.innerHTML = banners
       .map((b) => {
         const desktopUrl = `url('${b.image_url}')`;
-        const hasMobileImage = Boolean(b.image_url_mobile);
-        const mobileUrl = hasMobileImage ? `url('${b.image_url_mobile}')` : desktopUrl;
-        const mobileFit = hasMobileImage ? 'cover' : 'contain';
+        const mobileUrl = b.image_url_mobile ? `url('${b.image_url_mobile}')` : desktopUrl;
         return `
         <a class="promo-card" href="${b.link_url || '#'}">
-          <div class="promo-card__image" style="--bg-desktop:${desktopUrl};--bg-mobile:${mobileUrl};--bg-mobile-fit:${mobileFit}"></div>
+          <div class="promo-card__image" style="--bg-desktop:${desktopUrl};--bg-mobile:${mobileUrl}"></div>
           <div class="promo-card__text">
             ${b.title ? `<h4>${escapeHtml(b.title)}</h4>` : ''}
             ${b.subtitle ? `<p>${escapeHtml(b.subtitle)}</p>` : ''}

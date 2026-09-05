@@ -518,9 +518,9 @@ async function renderCustomersTab() {
 
   wrap.innerHTML = `
     <p style="font-size:0.85rem;color:var(--moss-700);margin-top:0;">${resetNote} There's no way to view or set a customer's actual password here — or anywhere else — on purpose; this only ever sends them a link to set a new one themselves.</p>
-    <div class="card">
+    <div class="card" style="overflow-x:auto;">
       <table class="data-table">
-        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th>Orders</th><th>Spent</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th>Orders</th><th>Spent</th><th>Groove Points</th><th></th></tr></thead>
         <tbody>
           ${
             customers.length
@@ -535,11 +535,16 @@ async function renderCustomersTab() {
                       <td>${c.created_at ? new Date(c.created_at).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
                       <td>${stats.count}</td>
                       <td class="mono">${formatRupees(stats.spendPaise)}</td>
-                      <td><button class="btn btn--outline btn--sm" data-send-reset="${c.email}">Send reset link</button></td>
+                      <td class="mono" data-points-cell>${c.loyalty_points || 0}</td>
+                      <td style="white-space:nowrap;display:flex;gap:6px;">
+                        <button class="btn btn--outline btn--sm" data-send-reset="${c.email}">Send reset link</button>
+                        <button class="btn btn--outline btn--sm" data-adjust-points="${c.id}">Adjust points</button>
+                        ${c.role === 'customer' ? `<button class="btn btn--outline btn--sm" data-impersonate="${c.id}" data-impersonate-email="${c.email}">Log in as</button>` : ''}
+                      </td>
                     </tr>`;
                   })
                   .join('')
-              : '<tr><td colspan="7" style="color:var(--moss-700);">No customers yet.</td></tr>'
+              : '<tr><td colspan="8" style="color:var(--moss-700);">No customers yet.</td></tr>'
           }
         </tbody>
       </table>
@@ -559,6 +564,50 @@ async function renderCustomersTab() {
         btn.textContent = originalLabel;
         btn.disabled = false;
         alert(err.message || 'Could not send the reset link.');
+      }
+    });
+  });
+
+  wrap.querySelectorAll('[data-adjust-points]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-adjust-points');
+      const input = prompt('Points to add (use a negative number to deduct):', '0');
+      if (input === null) return;
+      const delta = Number(input);
+      if (!delta) return alert('Enter a non-zero number.');
+      btn.disabled = true;
+      try {
+        const { balance } = await api(`/api/customers/${id}/points/adjust`, { method: 'POST', body: { delta } });
+        const cell = btn.closest('tr').querySelector('[data-points-cell]');
+        if (cell) cell.textContent = balance;
+      } catch (err) {
+        alert(err.message || 'Could not adjust points.');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+
+  wrap.querySelectorAll('[data-impersonate]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-impersonate');
+      const email = btn.getAttribute('data-impersonate-email');
+      if (!confirm(`Open the storefront signed in as ${email}? This opens in a new tab — your admin session here is unaffected.`)) return;
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = 'Opening…';
+      try {
+        const result = await api(`/api/customers/${id}/impersonate`, { method: 'POST' });
+        if (result.mode === 'supabase') {
+          window.open(result.actionLink, '_blank');
+        } else {
+          window.open(`/impersonate-callback?mode=demo&token=${encodeURIComponent(result.token)}`, '_blank');
+        }
+      } catch (err) {
+        alert(err.message || 'Could not sign in as this customer.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
       }
     });
   });
@@ -674,7 +723,12 @@ async function renderBannersTab() {
       </div>
       <div class="form-field"><label for="b-title">Title</label><input id="b-title" placeholder="e.g. Diwali Sale" /></div>
       <div class="form-field"><label for="b-subtitle">Subtitle / offer text (optional)</label><input id="b-subtitle" placeholder="e.g. 20% off, this week only" /></div>
-      <div class="form-field"><label for="b-file">Image</label><input id="b-file" type="file" accept="image/*" /></div>
+      <div class="form-field"><label for="b-file">Image (Desktop)</label><input id="b-file" type="file" accept="image/*" /></div>
+      <div class="form-field">
+        <label for="b-file-mobile">Image (Mobile) — optional</label>
+        <input id="b-file-mobile" type="file" accept="image/*" />
+        <p style="font-size:0.8rem;color:var(--moss-700);margin:4px 0 0;">If left blank, the desktop image is used and cropped to fit — set this if the desktop photo has text or a subject that gets cut off on a phone screen.</p>
+      </div>
       <div class="form-field"><label for="b-link">Link (optional)</label><input id="b-link" placeholder="/shop" /></div>
       <button class="btn btn--primary" id="add-banner-btn">Add Banner</button>
       <p class="form-error" id="add-banner-error" style="display:none;"></p>
@@ -703,6 +757,13 @@ async function renderBannersTab() {
               <img src="${b.image_url}" alt="${b.title || ''}" style="width:100%;border-radius:8px;margin-bottom:8px;aspect-ratio:16/9;object-fit:cover;" />
               <strong>${b.title || 'Untitled'}</strong>
               ${b.subtitle ? `<p style="font-size:0.85rem;color:var(--moss-700);margin:4px 0;">${b.subtitle}</p>` : ''}
+              <p style="font-size:0.78rem;color:var(--moss-700);margin:6px 0 2px;">
+                Mobile image: ${b.image_url_mobile ? 'set' : 'not set (desktop image is cropped for phones)'}
+              </p>
+              <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
+                <input type="file" accept="image/*" data-mobile-image-input="${b.id}" style="flex:1;font-size:0.78rem;" />
+                ${b.image_url_mobile ? `<button class="btn btn--outline btn--sm" data-clear-mobile-image="${b.id}">Clear</button>` : ''}
+              </div>
               <div class="flex-between" style="margin-top:8px;">
                 <label style="font-size:0.8rem;display:flex;align-items:center;gap:6px;">
                   <input type="checkbox" data-banner-active="${b.id}" ${b.is_active ? 'checked' : ''} /> Active
@@ -733,37 +794,65 @@ async function renderBannersTab() {
     });
   });
 
-  document.getElementById('add-banner-btn').addEventListener('click', async () => {
-    const errorEl = document.getElementById('add-banner-error');
-    errorEl.style.display = 'none';
-    const fileInput = document.getElementById('b-file');
-    const file = fileInput.files[0];
-    if (!file) {
-      errorEl.textContent = 'Choose an image first.';
-      errorEl.style.display = 'block';
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = async () => {
+  // Set/replace just the mobile crop on an existing banner — picking a file
+  // uploads immediately rather than needing a separate "Save" click, since
+  // this is a single-purpose control.
+  byPlacement.querySelectorAll('[data-mobile-image-input]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const file = input.files[0];
+      if (!file) return;
       try {
-        await api('/api/banners', {
-          method: 'POST',
-          body: {
-            title: document.getElementById('b-title').value,
-            subtitle: document.getElementById('b-subtitle').value,
-            image_url: reader.result,
-            link_url: document.getElementById('b-link').value,
-            placement: document.getElementById('b-placement').value,
-            sort_order: parseInt(document.getElementById('b-sort').value, 10) || 1,
-          },
+        const image_url_mobile = await readFileAsDataUrl(file);
+        await api(`/api/banners/${input.getAttribute('data-mobile-image-input')}`, {
+          method: 'PATCH',
+          body: { image_url_mobile },
         });
         renderBannersTab();
       } catch (err) {
-        errorEl.textContent = err.message;
-        errorEl.style.display = 'block';
+        alert(err.message || 'Could not upload the mobile image.');
       }
-    };
-    reader.readAsDataURL(file);
+    });
+  });
+  byPlacement.querySelectorAll('[data-clear-mobile-image]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await api(`/api/banners/${btn.getAttribute('data-clear-mobile-image')}`, {
+        method: 'PATCH',
+        body: { image_url_mobile: null },
+      });
+      renderBannersTab();
+    });
+  });
+
+  document.getElementById('add-banner-btn').addEventListener('click', async () => {
+    const errorEl = document.getElementById('add-banner-error');
+    errorEl.style.display = 'none';
+    const file = document.getElementById('b-file').files[0];
+    const mobileFile = document.getElementById('b-file-mobile').files[0];
+    if (!file) {
+      errorEl.textContent = 'Choose a desktop image first.';
+      errorEl.style.display = 'block';
+      return;
+    }
+    try {
+      const image_url = await readFileAsDataUrl(file);
+      const image_url_mobile = mobileFile ? await readFileAsDataUrl(mobileFile) : null;
+      await api('/api/banners', {
+        method: 'POST',
+        body: {
+          title: document.getElementById('b-title').value,
+          subtitle: document.getElementById('b-subtitle').value,
+          image_url,
+          image_url_mobile,
+          link_url: document.getElementById('b-link').value,
+          placement: document.getElementById('b-placement').value,
+          sort_order: parseInt(document.getElementById('b-sort').value, 10) || 1,
+        },
+      });
+      renderBannersTab();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.style.display = 'block';
+    }
   });
 }
 
