@@ -237,8 +237,39 @@ function findUserByEmail(email) {
   );
 }
 
-function registerCustomer({ email, password, full_name }) {
+function findUserById(id) {
+  return demoUsers.find((u) => u.id === id) || customerUsers.find((u) => u.id === id) || null;
+}
+
+function findUserByReferralCode(code) {
+  if (!code) return null;
+  const upper = String(code).toUpperCase();
+  return [...demoUsers, ...customerUsers].find((u) => u.referral_code === upper) || null;
+}
+
+// Demo-mode stand-in for the profiles table columns used by the refer-a-friend
+// feature — id/referral_code/referred_by, shaped the same as the real
+// Supabase profiles row dataStore.getProfile returns.
+function getProfile(userId) {
+  const user = findUserById(userId);
+  if (!user) return null;
+  return { id: user.id, referral_code: user.referral_code || null, referred_by: user.referred_by || null };
+}
+
+function setReferralCode(userId, code) {
+  const user = findUserById(userId);
+  if (!user) return null;
+  user.referral_code = code;
+  return code;
+}
+
+function countReferredUsers(userId) {
+  return [...demoUsers, ...customerUsers].filter((u) => u.referred_by === userId).length;
+}
+
+function registerCustomer({ email, password, full_name, referralCode }) {
   if (findUserByEmail(email)) return null; // already exists
+  const referrer = referralCode ? findUserByReferralCode(referralCode) : null;
   const user = {
     id: `cust_${Date.now()}`,
     email,
@@ -246,6 +277,8 @@ function registerCustomer({ email, password, full_name }) {
     role: 'customer',
     full_name: full_name || null,
     created_at: new Date().toISOString(),
+    referral_code: Math.random().toString(36).slice(2, 10).toUpperCase(),
+    referred_by: referrer ? referrer.id : null,
   };
   customerUsers.push(user);
   return user;
@@ -339,6 +372,11 @@ module.exports = {
   customerUsers,
   findUserByEmail,
   registerCustomer,
+  findUserById,
+  findUserByReferralCode,
+  getProfile,
+  setReferralCode,
+  countReferredUsers,
   listAllUsers,
   setUserPassword,
   createPasswordResetToken,

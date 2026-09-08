@@ -17,12 +17,47 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
--- Auto-create a profile row whenever someone signs up via Supabase Auth
+-- Refer-a-friend: every customer gets a short share code; signing up
+-- through someone's ?ref=CODE link sets referred_by to that person. Added
+-- after profiles already existed in production, so these are ALTERs (with
+-- IF NOT EXISTS) rather than columns on the CREATE TABLE above — re-running
+-- this file is what backfills them onto an existing database.
+alter table public.profiles add column if not exists referral_code text unique;
+alter table public.profiles add column if not exists referred_by uuid references public.profiles(id);
+
+-- Generates a short, unique, human-shareable referral code — collisions are
+-- astronomically unlikely at 8 base36 characters, but the loop + unique
+-- constraint make it impossible to hand out a duplicate either way.
+create or replace function public.generate_referral_code()
+returns text as $$
+declare
+  code text;
+begin
+  loop
+    code := upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8));
+    exit when not exists (select 1 from public.profiles where referral_code = code);
+  end loop;
+  return code;
+end;
+$$ language plpgsql;
+
+-- Auto-create a profile row whenever someone signs up via Supabase Auth.
+-- Every new profile gets its own referral_code, and — if raw_user_meta_data
+-- carried a referral_code from a ?ref= sign-up link (see backend/routes/auth.js) —
+-- referred_by is resolved and set here too. An unrecognized/missing code
+-- just leaves referred_by null; it never blocks the signup.
 create or replace function public.handle_new_user()
 returns trigger as $$
+declare
+  referrer_id uuid;
 begin
-  insert into public.profiles (id, full_name, role)
-  values (new.id, new.raw_user_meta_data->>'full_name', 'customer');
+  if new.raw_user_meta_data->>'referral_code' is not null then
+    select id into referrer_id from public.profiles
+      where referral_code = upper(new.raw_user_meta_data->>'referral_code')
+      limit 1;
+  end if;
+  insert into public.profiles (id, full_name, role, referral_code, referred_by)
+  values (new.id, new.raw_user_meta_data->>'full_name', 'customer', public.generate_referral_code(), referrer_id);
   return new;
 end;
 $$ language plpgsql security definer;
@@ -178,6 +213,13 @@ create table if not exists public.banners (
   sort_order integer default 0,
   created_at timestamptz not null default now()
 );
+
+-- Added after banners already existed in production — ALTERs (with IF NOT
+-- EXISTS) so re-running this file backfills them onto an existing database,
+-- same as the profiles ones above.
+alter table public.banners add column if not exists image_url_mobile text;
+alter table public.banners add column if not exists image_position text not null default 'center center';
+alter table public.banners add column if not exists image_fit text not null default 'cover';
 
 -- ---------------------------------------------------------------------
 -- newsletter + contact form submissions

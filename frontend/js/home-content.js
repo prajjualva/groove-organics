@@ -63,6 +63,12 @@ async function loadHeroSlider() {
     const desktopUrl = `url('${b.image_url}')`;
     const mobileUrl = b.image_url_mobile ? `url('${b.image_url_mobile}')` : desktopUrl;
     el.style.backgroundImage = heroBgQuery.matches ? mobileUrl : desktopUrl;
+    // Admin-set focus point / fit (Admin → Banners → Focus point / Fit).
+    // Small keyword values, not the image data itself, so — unlike
+    // background-image above — these are fine to just set as plain inline
+    // styles too; no custom-property size concern here.
+    el.style.backgroundPosition = b.image_position || 'center center';
+    el.style.backgroundSize = b.image_fit || 'cover';
   }
 
   slider.innerHTML = banners
@@ -245,6 +251,8 @@ async function loadPromoBanners() {
         const desktopUrl = `url('${b.image_url}')`;
         const mobileUrl = b.image_url_mobile ? `url('${b.image_url_mobile}')` : desktopUrl;
         el.style.backgroundImage = promoBgQuery.matches ? mobileUrl : desktopUrl;
+        el.style.backgroundPosition = b.image_position || 'center center';
+        el.style.backgroundSize = b.image_fit || 'cover';
       });
     }
     applyPromoBg();

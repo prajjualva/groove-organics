@@ -261,6 +261,7 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
   let discountPaise = 0;
   let appliedCoupon = null;
   const preDiscountGoodsPaise = subtotalPaise + gstPaise; // sum of inclusive line totals
+  const settings = await getStoreSettings();
   if (couponCode) {
     const validation = await validateCoupon(couponCode, preDiscountGoodsPaise);
     if (validation.valid) {
@@ -278,8 +279,23 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
     discountPaise += loyaltyRedemption.discountPaise;
   }
 
+  // Refer-a-friend signup discount: automatic, no coupon code needed —
+  // applies once, on a referred customer's very first order only (checked
+  // via hasExistingOrders, BEFORE this order is inserted below). Stacks on
+  // top of whatever's left after the coupon + points redemption above, same
+  // pattern as loyalty redemption.
+  let referralDiscountPaise = 0;
+  if (userId && settings.referral_program_enabled) {
+    const profile = await getProfile(userId);
+    if (profile && profile.referred_by && !(await hasExistingOrders(userId))) {
+      const remainingGoodsPaise = Math.max(0, preDiscountGoodsPaise - discountPaise);
+      referralDiscountPaise = Math.round((remainingGoodsPaise * Number(settings.referral_discount_percent || 0)) / 100);
+      referralDiscountPaise = Math.max(0, Math.min(referralDiscountPaise, remainingGoodsPaise));
+      discountPaise += referralDiscountPaise;
+    }
+  }
+
   // Free-shipping threshold applies AFTER the coupon discount.
-  const settings = await getStoreSettings();
   const freeShippingThreshold = settings.free_shipping_threshold_paise;
   if (freeShippingThreshold != null && preDiscountGoodsPaise - discountPaise >= freeShippingThreshold) {
     totalShippingPaise = 0;
@@ -483,6 +499,7 @@ async function markOrderPaid(id, { paymentGateway, paymentOrderId, paymentId }) 
   // the moment an order first becomes paid — never on repeat calls for the same order.
   if (!alreadyPaid && order.user_id) {
     await earnLoyaltyPoints(order.user_id, order.id, order.subtotal_paise).catch(() => {});
+    await awardReferralBonus(order.user_id, order.id).catch(() => {});
   }
   return order;
 }
@@ -735,6 +752,114 @@ async function redeemLoyaltyPoints(userId, orderId, pointsToRedeem) {
     reason: 'order_redeemed',
   });
   return { redeemed: points, discountPaise };
+}
+
+// --- Refer-a-friend ---
+// profiles.referral_code / profiles.referred_by (see db/schema.sql). New
+// signups get a code + get linked to their referrer automatically (Postgres
+// trigger, live mode) or via mock.registerCustomer (demo mode) — this
+// getOrCreateReferralCode is a fallback for any account that existed before
+// this feature shipped and so never got a code assigned.
+async function getProfile(userId) {
+  if (!userId) return null;
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Reading profiles needs SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .select('id, referral_code, referred_by')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  return mock.getProfile(userId);
+}
+
+function randomReferralCode() {
+  return Math.random().toString(36).slice(2, 10).toUpperCase();
+}
+
+async function getOrCreateReferralCode(userId) {
+  const profile = await getProfile(userId);
+  if (profile && profile.referral_code) return profile.referral_code;
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Updating profiles needs SUPABASE_SERVICE_ROLE_KEY set.');
+    // A handful of retries in case of a (very unlikely) code collision with
+    // the unique constraint on profiles.referral_code.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = randomReferralCode();
+      const { data, error } = await supabaseAdmin
+        .from('profiles')
+        .update({ referral_code: code })
+        .eq('id', userId)
+        .select('referral_code')
+        .single();
+      if (!error) return data.referral_code;
+      if (error.code !== '23505') throw error; // anything but "unique violation" is unexpected
+    }
+    throw new Error('Could not generate a unique referral code — try again.');
+  }
+  return mock.setReferralCode(userId, randomReferralCode());
+}
+
+// Used by createOrder to gate the refer-a-friend signup discount to a
+// customer's very first order — a lightweight existence check rather than
+// pulling every past order (listOrdersForUser also joins order_items).
+async function hasExistingOrders(userId) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Order visibility needs SUPABASE_SERVICE_ROLE_KEY set.');
+    const { count, error } = await supabaseAdmin
+      .from('orders')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    if (error) throw error;
+    return (count || 0) > 0;
+  }
+  return mock.orders.some((o) => o.user_id === userId);
+}
+
+// Referrer's reward: awarded every time (not just the first time) the friend
+// they referred pays for an order — called from markOrderPaid, guarded the
+// same way earnLoyaltyPoints is (only on the paid transition, never on
+// repeat webhook/confirm calls for the same order).
+async function awardReferralBonus(buyerUserId, orderId) {
+  const settings = await getStoreSettings();
+  if (!settings.referral_program_enabled || !buyerUserId) return null;
+  const profile = await getProfile(buyerUserId);
+  if (!profile || !profile.referred_by) return null;
+  const points = Math.floor(Number(settings.referral_points_per_order)) || 0;
+  if (points <= 0) return null;
+  return addLoyaltyEntry({
+    user_id: profile.referred_by,
+    order_id: orderId,
+    points_delta: points,
+    reason: 'referral_bonus',
+  });
+}
+
+// Customer-facing summary for the account "Refer & Earn" tab: their own
+// code/link, how many people they've referred, and points earned from it
+// specifically (a subset of their total Groove Points balance).
+async function getReferralStats(userId) {
+  const code = await getOrCreateReferralCode(userId);
+  let referredCount;
+  let pointsFromReferrals;
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Reading referral stats needs SUPABASE_SERVICE_ROLE_KEY set.');
+    const [{ count, error: countError }, { data: ledgerRows, error: ledgerError }] = await Promise.all([
+      supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).eq('referred_by', userId),
+      supabaseAdmin.from('loyalty_ledger').select('points_delta').eq('user_id', userId).eq('reason', 'referral_bonus'),
+    ]);
+    if (countError) throw countError;
+    if (ledgerError) throw ledgerError;
+    referredCount = count || 0;
+    pointsFromReferrals = (ledgerRows || []).reduce((sum, r) => sum + r.points_delta, 0);
+  } else {
+    referredCount = mock.countReferredUsers(userId);
+    const ledger = await listLoyaltyLedger(userId);
+    pointsFromReferrals = ledger.filter((l) => l.reason === 'referral_bonus').reduce((sum, r) => sum + r.points_delta, 0);
+  }
+  return { code, referredCount, pointsFromReferrals };
 }
 
 async function addNewsletterSubscriber(email) {
@@ -1067,6 +1192,20 @@ const DEFAULT_CONTENT = {
     loyalty_redeem_cap_percent: 50, // points can cover at most this % of an order's value
     low_stock_threshold: 10, // Admin → Reports flags products at/below this stock level
     blocked_pincodes: [], // array of 6-digit strings we don't currently deliver to
+    // Refer-a-friend: every signed-in customer has a referral_code (profiles
+    // table). Sharing it as ?ref=CODE on the sign-up page links the new
+    // account to them (profiles.referred_by). From then on, the REFERRER
+    // earns referral_points_per_order Groove Points every time the referred
+    // friend's order is paid (not just their first — see awardReferralBonus
+    // in markOrderPaid), and the NEW customer gets referral_discount_percent
+    // off their own first order automatically (see createOrder) — no coupon
+    // code needed on either side. Independent of the loyalty_points_* fields
+    // above, but shares the same loyalty_ledger table (reason:
+    // 'referral_bonus') so both show up together in a customer's points
+    // history.
+    referral_program_enabled: false,
+    referral_points_per_order: 100,
+    referral_discount_percent: 10,
   },
   page_terms: {
     title: 'Terms & Conditions',
@@ -1245,4 +1384,9 @@ module.exports = {
   previewLoyaltyRedemption,
   redeemLoyaltyPoints,
   listCustomers,
+  getProfile,
+  getOrCreateReferralCode,
+  hasExistingOrders,
+  awardReferralBonus,
+  getReferralStats,
 };

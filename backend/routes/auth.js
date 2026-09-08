@@ -9,12 +9,21 @@ const router = express.Router();
 // Customer self-registration. Admin/staff accounts are never created this way —
 // those come from Supabase (see docs/setup-guide.md) or the two fixed demo logins.
 router.post('/register', async (req, res) => {
-  const { email, password, full_name } = req.body || {};
+  const { email, password, full_name, referral_code: referralCode } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
   if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
 
   if (isConfigured) {
-    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name } } });
+    // referral_code is looked up server-side, in the handle_new_user()
+    // Postgres trigger (see db/schema.sql) — this just passes whatever the
+    // sign-up page had in its ?ref= link along, in the same
+    // raw_user_meta_data blob full_name already goes through. An unknown or
+    // missing code is silently ignored there, never an error here.
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { full_name, referral_code: referralCode || null } },
+    });
     if (error) return res.status(400).json({ error: error.message });
     if (!data.session) {
       // Supabase project has "confirm email" turned on — no session yet.
@@ -30,7 +39,7 @@ router.post('/register', async (req, res) => {
     });
   }
 
-  const user = mock.registerCustomer({ email, password, full_name });
+  const user = mock.registerCustomer({ email, password, full_name, referralCode });
   if (!user) return res.status(409).json({ error: 'An account with that email already exists.' });
   const token = mock.createSession(user);
   res.status(201).json({

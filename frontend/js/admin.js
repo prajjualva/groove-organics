@@ -697,6 +697,22 @@ const BANNER_PLACEMENTS = [
   { value: 'sitewide_announcement', label: 'Sitewide Announcement Strip' },
 ];
 
+// Sets background-position on the frontend (see home-content.js) — which
+// part of the photo stays visible/centered when it's cropped to fill the
+// frame (Fit: "Fill frame") or where it sits within any letterboxed space
+// (Fit: "Show whole photo").
+const BANNER_POSITION_OPTIONS = [
+  { value: 'left top', label: 'Top left' },
+  { value: 'center top', label: 'Top center' },
+  { value: 'right top', label: 'Top right' },
+  { value: 'left center', label: 'Middle left' },
+  { value: 'center center', label: 'Center (default)' },
+  { value: 'right center', label: 'Middle right' },
+  { value: 'left bottom', label: 'Bottom left' },
+  { value: 'center bottom', label: 'Bottom center' },
+  { value: 'right bottom', label: 'Bottom right' },
+];
+
 function placementLabel(value) {
   const found = BANNER_PLACEMENTS.find((p) => p.value === value);
   return found ? found.label : value;
@@ -728,6 +744,19 @@ async function renderBannersTab() {
         <label for="b-file-mobile">Image (Mobile) — optional</label>
         <input id="b-file-mobile" type="file" accept="image/*" />
         <p style="font-size:0.8rem;color:var(--moss-700);margin:4px 0 0;">If left blank, the desktop image is used and cropped to fit — set this if the desktop photo has text or a subject that gets cut off on a phone screen.</p>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label for="b-position">Focus point</label>
+          <select id="b-position">${BANNER_POSITION_OPTIONS.map((p) => `<option value="${p.value}">${p.label}</option>`).join('')}</select>
+        </div>
+        <div class="form-field">
+          <label for="b-fit">Fit</label>
+          <select id="b-fit">
+            <option value="cover">Fill frame (crops edges)</option>
+            <option value="contain">Show whole photo (may letterbox)</option>
+          </select>
+        </div>
       </div>
       <div class="form-field"><label for="b-link">Link (optional)</label><input id="b-link" placeholder="/shop" /></div>
       <button class="btn btn--primary" id="add-banner-btn">Add Banner</button>
@@ -764,6 +793,21 @@ async function renderBannersTab() {
                 <input type="file" accept="image/*" data-mobile-image-input="${b.id}" style="flex:1;font-size:0.78rem;" />
                 ${b.image_url_mobile ? `<button class="btn btn--outline btn--sm" data-clear-mobile-image="${b.id}">Clear</button>` : ''}
               </div>
+              <div class="form-row" style="margin-bottom:0;">
+                <div class="form-field" style="margin-bottom:8px;">
+                  <label style="font-size:0.78rem;">Focus point</label>
+                  <select data-banner-position="${b.id}" style="font-size:0.8rem;">
+                    ${BANNER_POSITION_OPTIONS.map((p) => `<option value="${p.value}" ${(b.image_position || 'center center') === p.value ? 'selected' : ''}>${p.label}</option>`).join('')}
+                  </select>
+                </div>
+                <div class="form-field" style="margin-bottom:8px;">
+                  <label style="font-size:0.78rem;">Fit</label>
+                  <select data-banner-fit="${b.id}" style="font-size:0.8rem;">
+                    <option value="cover" ${(b.image_fit || 'cover') === 'cover' ? 'selected' : ''}>Fill frame</option>
+                    <option value="contain" ${b.image_fit === 'contain' ? 'selected' : ''}>Show whole photo</option>
+                  </select>
+                </div>
+              </div>
               <div class="flex-between" style="margin-top:8px;">
                 <label style="font-size:0.8rem;display:flex;align-items:center;gap:6px;">
                   <input type="checkbox" data-banner-active="${b.id}" ${b.is_active ? 'checked' : ''} /> Active
@@ -791,6 +835,30 @@ async function renderBannersTab() {
         method: 'PATCH',
         body: { is_active: input.checked },
       });
+    });
+  });
+  byPlacement.querySelectorAll('[data-banner-position]').forEach((select) => {
+    select.addEventListener('change', async () => {
+      try {
+        await api(`/api/banners/${select.getAttribute('data-banner-position')}`, {
+          method: 'PATCH',
+          body: { image_position: select.value },
+        });
+      } catch (err) {
+        alert(err.message || 'Could not update the focus point.');
+      }
+    });
+  });
+  byPlacement.querySelectorAll('[data-banner-fit]').forEach((select) => {
+    select.addEventListener('change', async () => {
+      try {
+        await api(`/api/banners/${select.getAttribute('data-banner-fit')}`, {
+          method: 'PATCH',
+          body: { image_fit: select.value },
+        });
+      } catch (err) {
+        alert(err.message || 'Could not update the fit.');
+      }
     });
   });
 
@@ -846,6 +914,8 @@ async function renderBannersTab() {
           link_url: document.getElementById('b-link').value,
           placement: document.getElementById('b-placement').value,
           sort_order: parseInt(document.getElementById('b-sort').value, 10) || 1,
+          image_position: document.getElementById('b-position').value,
+          image_fit: document.getElementById('b-fit').value,
         },
       });
       renderBannersTab();
@@ -1169,6 +1239,15 @@ async function renderStoreSettingsTab() {
       </div>
       <div class="form-field"><label>Max % of an order points can cover</label><input id="ss-loyalty-cap" type="number" min="0" max="100" value="${s.loyalty_redeem_cap_percent != null ? s.loyalty_redeem_cap_percent : 50}" /></div>
     </div>
+    <div class="card">
+      <h3 class="mt-0">Refer a friend</h3>
+      <p style="font-size:0.85rem;color:var(--moss-700);">Every customer gets a share link from their account (Refer & Earn tab). When someone signs up through it: the referrer earns Groove Points on every order their friend places, and the new customer gets a discount automatically on their own first order — no coupon code needed either way.</p>
+      <div class="form-field"><label><input type="checkbox" id="ss-referral-enabled" ${s.referral_program_enabled ? 'checked' : ''} /> Enabled</label></div>
+      <div class="form-row">
+        <div class="form-field"><label>Groove Points per order (to the referrer)</label><input id="ss-referral-points" type="number" min="0" value="${s.referral_points_per_order != null ? s.referral_points_per_order : 100}" /></div>
+        <div class="form-field"><label>Discount % on the friend's first order</label><input id="ss-referral-discount" type="number" min="0" max="100" value="${s.referral_discount_percent != null ? s.referral_discount_percent : 10}" /></div>
+      </div>
+    </div>
     <button class="btn btn--primary" id="ss-save">Save Settings</button>
     <span class="form-error" id="ss-saved" style="display:none;color:var(--moss-700);">Saved.</span>
   `;
@@ -1197,6 +1276,9 @@ async function renderStoreSettingsTab() {
         loyalty_earn_rate_paise_per_point: Math.round((parseFloat(document.getElementById('ss-loyalty-earn').value) || 100) * 100),
         loyalty_redeem_value_paise_per_point: Math.round((parseFloat(document.getElementById('ss-loyalty-redeem').value) || 1) * 100),
         loyalty_redeem_cap_percent: parseInt(document.getElementById('ss-loyalty-cap').value, 10) || 0,
+        referral_program_enabled: document.getElementById('ss-referral-enabled').checked,
+        referral_points_per_order: parseInt(document.getElementById('ss-referral-points').value, 10) || 0,
+        referral_discount_percent: parseInt(document.getElementById('ss-referral-discount').value, 10) || 0,
       },
     });
     const saved = document.getElementById('ss-saved');

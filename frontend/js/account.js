@@ -167,7 +167,9 @@ async function renderLoyaltyTab() {
             ? ledger
                 .map(
                   (l) =>
-                    `<div class="flex-between" style="font-size:0.9rem;padding:6px 0;border-bottom:1px solid var(--sand-300);"><span>${l.reason === 'order_earned' ? 'Earned' : l.reason === 'order_redeemed' ? 'Redeemed' : 'Adjustment'} ${l.order_id ? `— order ${l.order_id}` : ''}</span><span class="mono">${l.points_delta > 0 ? '+' : ''}${l.points_delta}</span></div>`
+                    `<div class="flex-between" style="font-size:0.9rem;padding:6px 0;border-bottom:1px solid var(--sand-300);"><span>${
+                      { order_earned: 'Earned', order_redeemed: 'Redeemed', referral_bonus: 'Referral bonus' }[l.reason] || 'Adjustment'
+                    } ${l.order_id ? `— order ${l.order_id}` : ''}</span><span class="mono">${l.points_delta > 0 ? '+' : ''}${l.points_delta}</span></div>`
                 )
                 .join('')
             : '<p style="color:var(--moss-700);">No activity yet — points are earned once your first order is paid.</p>'
@@ -176,6 +178,44 @@ async function renderLoyaltyTab() {
     `;
   } catch (err) {
     wrap.innerHTML = `<div class="empty-state">${err.message || 'Could not load your Groove Points.'}</div>`;
+  }
+}
+
+async function renderReferralTab() {
+  const wrap = document.getElementById('account-tab-content');
+  wrap.innerHTML = '<p>Loading your referral link…</p>';
+  try {
+    const { link, referredCount, pointsFromReferrals } = await api('/api/customer/referral');
+    wrap.innerHTML = `
+      <div class="card" style="max-width:560px;">
+        <h3 class="mt-0">Refer & Earn</h3>
+        <p style="color:var(--moss-700);">Share your link — when a friend signs up and orders, you earn Groove Points on every order they place.</p>
+        <div class="form-field">
+          <label for="referral-link">Your link</label>
+          <div style="display:flex;gap:8px;">
+            <input id="referral-link" value="${link}" readonly style="flex:1;" />
+            <button class="btn btn--outline btn--sm" id="referral-copy-btn">Copy</button>
+          </div>
+        </div>
+        <div class="flex-between" style="margin-top:16px;">
+          <div><p style="font-size:1.6rem;font-weight:700;margin:0;" class="mono">${referredCount}</p><p style="color:var(--moss-700);margin:0;font-size:0.85rem;">Friends referred</p></div>
+          <div><p style="font-size:1.6rem;font-weight:700;margin:0;" class="mono">${pointsFromReferrals}</p><p style="color:var(--moss-700);margin:0;font-size:0.85rem;">Points earned from referrals</p></div>
+        </div>
+      </div>
+    `;
+    document.getElementById('referral-copy-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('referral-copy-btn');
+      try {
+        await navigator.clipboard.writeText(link);
+        btn.textContent = 'Copied!';
+      } catch (err) {
+        document.getElementById('referral-link').select();
+        btn.textContent = 'Select & copy';
+      }
+      setTimeout(() => (btn.textContent = 'Copy'), 2000);
+    });
+  } catch (err) {
+    wrap.innerHTML = `<div class="empty-state">${err.message || 'Could not load your referral link.'}</div>`;
   }
 }
 
@@ -197,6 +237,7 @@ const ACCOUNT_TAB_RENDERERS = {
   addresses: renderAddressesTab,
   wishlist: renderWishlistTab,
   loyalty: renderLoyaltyTab,
+  referral: renderReferralTab,
   profile: renderProfileTab,
 };
 

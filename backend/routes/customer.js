@@ -84,4 +84,24 @@ router.delete('/wishlist/:productId', async (req, res, next) => {
   }
 });
 
+// --- Refer a friend ---
+// GET /api/customer/referral — this customer's own share code/link + how
+// many people they've referred and how many Groove Points that's earned
+// them. Generates a code on first request for any account that predates
+// this feature (see dataStore.getOrCreateReferralCode).
+router.get('/referral', async (req, res, next) => {
+  try {
+    const { code, referredCount, pointsFromReferrals } = await store.getReferralStats(req.user.userId);
+    const origin = process.env.FRONTEND_ORIGIN || `${req.protocol}://${req.get('host')}`;
+    res.json({
+      code,
+      link: `${origin}/account?ref=${encodeURIComponent(code)}`,
+      referredCount,
+      pointsFromReferrals,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
