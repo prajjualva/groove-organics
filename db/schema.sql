@@ -221,6 +221,29 @@ alter table public.banners add column if not exists image_url_mobile text;
 alter table public.banners add column if not exists image_position text not null default 'center center';
 alter table public.banners add column if not exists image_fit text not null default 'cover';
 
+-- Scheduling: is_active is the admin's manual on/off; a banner can also be
+-- given an optional publish window. Status (draft/scheduled/active/expired)
+-- is computed at read time from these two, not stored — see
+-- backend/lib/dataStore.js computeBannerStatus, so it can never drift out
+-- of sync the way a persisted "status" column + cron would.
+alter table public.banners add column if not exists scheduled_start timestamptz;
+alter table public.banners add column if not exists scheduled_end timestamptz;
+
+-- Crop/zoom focus point for the admin's drag-to-position-and-zoom tool.
+-- Percent-from-top-left (0-100) + a zoom multiplier (1 = normal cover fit).
+-- Applied via CSS background-position + transform:scale/transform-origin —
+-- see frontend/js/home-content.js. *_mobile variants are optional and only
+-- used once an admin has actually adjusted the mobile crop; until then the
+-- mobile rendering falls back to the desktop focus/zoom values.
+alter table public.banners add column if not exists image_focus_x numeric(5,2) not null default 50;
+alter table public.banners add column if not exists image_focus_y numeric(5,2) not null default 50;
+alter table public.banners add column if not exists image_zoom numeric(4,2) not null default 1;
+alter table public.banners add column if not exists image_focus_x_mobile numeric(5,2);
+alter table public.banners add column if not exists image_focus_y_mobile numeric(5,2);
+alter table public.banners add column if not exists image_zoom_mobile numeric(4,2);
+
+create index if not exists banners_placement_sort_idx on public.banners (placement, sort_order);
+
 -- ---------------------------------------------------------------------
 -- newsletter + contact form submissions
 -- ---------------------------------------------------------------------

@@ -211,7 +211,7 @@ a { color: inherit; text-decoration: none; }
 /* Rotating hero background — admin-managed highlighted-product photos,
    set from the dashboard's Banners tab (placement: Homepage Hero). Sits
    above the Three.js canvas fallback, below the scrim + text. */
-.hero__slider { position: absolute; inset: 0; z-index: 1; }
+.hero__slider { position: absolute; inset: 0; z-index: 1; overflow: hidden; }
 /* Each slide carries both a desktop and (optional) mobile crop, set as
    background-image directly by home-content.js (via matchMedia) rather than
    as a CSS custom property here — banner photos are uncompressed base64
@@ -227,6 +227,16 @@ a { color: inherit; text-decoration: none; }
   position: absolute; inset: 0;
   background-size: cover; background-position: center;
   opacity: 0; transition: opacity 1.2s ease;
+  /* Admin → Banners crop/zoom tool: pan + zoom into a focus point, layered on
+     top of the base background-image/-position/-size set directly above by
+     home-content.js. --banner-zoom/-focus-x/-focus-y are small numeric or
+     percentage values (not the image data itself), so unlike
+     background-image they're safe as CSS custom properties — the Chrome bug
+     documented above only drops values once they reach the multi-megabyte
+     range these never do. Falls back to no zoom / a centered origin for any
+     banner saved before this feature existed. */
+  transform: scale(var(--banner-zoom, 1));
+  transform-origin: var(--banner-focus-x, 50%) var(--banner-focus-y, 50%);
 }
 .hero__slide.is-active { opacity: 1; }
 .hero__slider-dots {
@@ -348,6 +358,9 @@ a { color: inherit; text-decoration: none; }
   position: absolute; inset: 0;
   background-size: cover; background-position: center;
   transition: transform 0.5s ease;
+  /* Crop/zoom tool — see the matching comment on .hero__slide above. */
+  transform: scale(var(--banner-zoom, 1));
+  transform-origin: var(--banner-focus-x, 50%) var(--banner-focus-y, 50%);
 }
 /* Desktop/mobile image switch, plus each banner's admin-set focus point
    (background-position) and fit (background-size: cover/contain, Admin →
@@ -356,7 +369,10 @@ a { color: inherit; text-decoration: none; }
    here as a CSS custom property. The background-size/position above are
    just the pre-JS defaults (used only in the brief window before the
    banner API response arrives, or if it fails). */
-.promo-card:hover .promo-card__image { transform: scale(1.06); }
+/* Combines with the saved crop-tool zoom (--banner-zoom) rather than
+   replacing it, so hovering a card that already has a zoomed-in crop set
+   zooms in slightly further from there instead of snapping back to 1x. */
+.promo-card:hover .promo-card__image { transform: scale(calc(var(--banner-zoom, 1) * 1.06)); }
 .promo-card::after {
   content: ''; position: absolute; inset: 0;
   background: linear-gradient(180deg, rgba(27,36,22,0) 40%, rgba(27,36,22,0.75) 100%);
@@ -723,3 +739,81 @@ table.data-table th { font-family: var(--font-mono); text-transform: uppercase; 
   font-family: var(--font-body); font-size: 0.85rem; cursor: pointer; font-weight: 600; color: var(--moss-700);
 }
 .dashboard-nav button.active { background: var(--moss-900); color: var(--cream); border-color: var(--moss-900); }
+
+/* ---------------------------------------------------------------------
+   Admin → Banners (hero/promo/announcement banner manager)
+   --------------------------------------------------------------------- */
+/* Reuses the .status-pill base already defined above (order statuses) with
+   its own color set, so banner status chips match the visual language of
+   every other status pill in the admin/staff dashboards. */
+.status-draft { background: var(--sand-300); color: var(--moss-700); }
+.status-scheduled { background: #cfe3ec; color: #1f5a72; }
+.status-active { background: #d4ecd8; color: #266138; }
+.status-expired { background: #f0d6d1; color: #8c3423; }
+
+.btn--danger { border-color: var(--clay-600); color: var(--clay-600); }
+.btn--danger:hover { background: rgba(147, 68, 21, 0.08); }
+
+.banner-toolbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+.banner-toolbar input[type="search"], .banner-toolbar select {
+  padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--sand-300);
+  font-family: var(--font-body); font-size: 0.85rem; background: white;
+}
+.banner-toolbar .spacer { flex: 1; }
+
+.bulk-bar {
+  display: flex; align-items: center; gap: 10px; background: var(--moss-900); color: var(--cream);
+  padding: 10px 16px; border-radius: var(--radius-md); margin-bottom: 14px; font-size: 0.85rem; flex-wrap: wrap;
+}
+.bulk-bar .spacer { flex: 1; }
+.bulk-bar button { font-size: 0.8rem; padding: 7px 14px; }
+
+.banner-row-thumb { width: 76px; height: 44px; object-fit: cover; border-radius: 6px; display: block; background: var(--sand-100); }
+.banner-drag-handle { cursor: grab; color: var(--moss-700); opacity: 0.55; font-size: 1.1rem; user-select: none; touch-action: none; }
+.banner-drag-handle:active { cursor: grabbing; }
+tr.banner-row.is-dragging { opacity: 0.4; }
+tr.banner-row.drag-over-top td { box-shadow: inset 0 2px 0 var(--gold-500); }
+tr.banner-row.drag-over-bottom td { box-shadow: inset 0 -2px 0 var(--gold-500); }
+
+.banner-schedule-text { font-size: 0.78rem; color: var(--moss-700); font-family: var(--font-mono); }
+
+/* Crop/zoom tool — drag to reposition, slider to zoom. Uses an <img> (not a
+   background-image div) so object-position/object-fit can do the panning —
+   the live site applies the exact same math (focus point + zoom-from-that-point)
+   via background-position + transform:scale, see .hero__slide above. */
+.crop-tool__stage {
+  position: relative; width: 100%; overflow: hidden; border-radius: var(--radius-md);
+  background: var(--sand-200); cursor: grab; touch-action: none; border: 1px solid var(--sand-300);
+}
+.crop-tool__stage.is-panning { cursor: grabbing; }
+.crop-tool__img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  pointer-events: none; will-change: transform;
+}
+.crop-tool__crosshair {
+  position: absolute; width: 16px; height: 16px; border: 2px solid var(--gold-500); border-radius: 50%;
+  transform: translate(-50%, -50%); pointer-events: none; box-shadow: 0 0 0 2px rgba(0,0,0,0.3);
+}
+.crop-tool__zoom { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; color: var(--moss-700); margin-top: 8px; }
+.crop-tool__zoom input[type="range"] { flex: 1; }
+.crop-tool__hint { font-size: 0.75rem; color: var(--moss-700); opacity: 0.75; margin-top: 4px; }
+
+/* Multi-width live preview */
+.preview-widths { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.preview-widths button {
+  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--sand-300); background: white;
+  font-family: var(--font-mono); font-size: 0.72rem; cursor: pointer; color: var(--moss-700);
+}
+.preview-widths button.active { background: var(--moss-900); color: var(--cream); border-color: var(--moss-900); }
+.preview-frame {
+  border: 1px solid var(--sand-300); border-radius: var(--radius-md); overflow: hidden; background: var(--sand-100);
+  margin: 0 auto; transition: width 0.2s ease; max-width: 100%;
+}
+.preview-frame__slide { position: relative; width: 100%; aspect-ratio: 16/9; overflow: hidden; background: var(--moss-900); }
+.preview-frame__slide.is-promo { aspect-ratio: 4/3; }
+.preview-frame__slide img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.preview-frame__caption { padding: 10px 14px; font-size: 0.8rem; color: var(--moss-700); background: white; }
+
+@media (max-width: 640px) {
+  .banner-toolbar { flex-direction: column; align-items: stretch; }
+}

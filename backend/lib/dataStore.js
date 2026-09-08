@@ -958,45 +958,105 @@ async function addContactMessage(msg) {
   return true;
 }
 
-async function listBanners({ includeInactive = false, placement = null } = {}) {
+// Status (Draft / Scheduled / Active / Expired) is computed here from
+// is_active + scheduled_start/scheduled_end rather than stored as its own
+// column — that way it can never drift out of sync the way a persisted
+// status flipped by a cron job could (e.g. if the cron missed a run). Every
+// banner read (admin listing, public storefront fetch) goes through this.
+function computeBannerStatus(banner) {
+  if (!banner.is_active) return 'draft';
+  const now = Date.now();
+  if (banner.scheduled_start && new Date(banner.scheduled_start).getTime() > now) return 'scheduled';
+  if (banner.scheduled_end && new Date(banner.scheduled_end).getTime() < now) return 'expired';
+  return 'active';
+}
+
+function withBannerStatus(banner) {
+  return { ...banner, status: computeBannerStatus(banner) };
+}
+
+// status/id/created_at are either computed (status) or server-owned
+// (id/created_at) — strip them from anything a client sends before writing,
+// since the admin UI round-trips full banner objects it read back from the
+// API (which include the computed `status`) into create/update calls.
+function sanitizeBannerInput(input) {
+  const clean = { ...(input || {}) };
+  delete clean.status;
+  delete clean.id;
+  delete clean.created_at;
+  return clean;
+}
+
+async function listBanners({ includeInactive = false, placement = null, status = null, search = null } = {}) {
+  let rows;
   if (isConfigured) {
     const client = supabaseAdmin || supabase;
     let query = client.from('banners').select('*').order('sort_order', { ascending: true });
-    if (!includeInactive) query = query.eq('is_active', true);
     if (placement) query = query.eq('placement', placement);
     const { data, error } = await query;
     if (error) throw error;
-    return data;
+    rows = data;
+  } else {
+    rows = mock.banners
+      .filter((b) => !placement || b.placement === placement)
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   }
-  return mock.banners
-    .filter((b) => includeInactive || b.is_active)
-    .filter((b) => !placement || b.placement === placement)
-    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  rows = rows.map(withBannerStatus);
+  if (!includeInactive) rows = rows.filter((b) => b.status === 'active');
+  if (status) rows = rows.filter((b) => b.status === status);
+  if (search) {
+    const q = search.toLowerCase();
+    rows = rows.filter((b) => (b.title || '').toLowerCase().includes(q) || (b.subtitle || '').toLowerCase().includes(q));
+  }
+  return rows;
+}
+
+async function getBannerById(id) {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client.from('banners').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data ? withBannerStatus(data) : null;
+  }
+  const banner = mock.banners.find((b) => b.id === id);
+  return banner ? withBannerStatus(banner) : null;
 }
 
 async function createBanner(input) {
+  const clean = sanitizeBannerInput(input);
   if (isConfigured) {
     if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
-    const { data, error } = await supabaseAdmin.from('banners').insert(input).select().single();
+    const { data, error } = await supabaseAdmin.from('banners').insert(clean).select().single();
     if (error) throw error;
-    return data;
+    return withBannerStatus(data);
   }
-  const banner = { id: `b_${Date.now()}`, is_active: true, sort_order: mock.banners.length + 1, ...input };
+  const banner = {
+    id: `b_${Date.now()}`,
+    is_active: true,
+    sort_order: mock.banners.length + 1,
+    image_focus_x: 50,
+    image_focus_y: 50,
+    image_zoom: 1,
+    scheduled_start: null,
+    scheduled_end: null,
+    ...clean,
+  };
   mock.banners.push(banner);
-  return banner;
+  return withBannerStatus(banner);
 }
 
 async function updateBanner(id, patch) {
+  const clean = sanitizeBannerInput(patch);
   if (isConfigured) {
     if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
-    const { data, error } = await supabaseAdmin.from('banners').update(patch).eq('id', id).select().single();
+    const { data, error } = await supabaseAdmin.from('banners').update(clean).eq('id', id).select().single();
     if (error) throw error;
-    return data;
+    return data ? withBannerStatus(data) : null;
   }
   const banner = mock.banners.find((b) => b.id === id);
   if (!banner) return null;
-  Object.assign(banner, patch);
-  return banner;
+  Object.assign(banner, clean);
+  return withBannerStatus(banner);
 }
 
 async function deleteBanner(id) {
@@ -1010,6 +1070,52 @@ async function deleteBanner(id) {
   if (idx === -1) return false;
   mock.banners.splice(idx, 1);
   return true;
+}
+
+// Duplicate a banner (Admin -> Banners -> Duplicate). The copy always lands
+// as a Draft (is_active:false) at the end of its placement's order, so
+// duplicating something live never silently doubles it up on the storefront.
+async function duplicateBanner(id) {
+  const source = await getBannerById(id);
+  if (!source) return null;
+  const siblings = await listBanners({ includeInactive: true, placement: source.placement });
+  const maxSort = siblings.reduce((max, b) => Math.max(max, b.sort_order || 0), 0);
+  const copy = sanitizeBannerInput(source);
+  copy.title = source.title ? `${source.title} (Copy)` : 'Untitled (Copy)';
+  copy.is_active = false;
+  copy.sort_order = maxSort + 1;
+  return createBanner(copy);
+}
+
+// Bulk drag-and-drop reorder — ids in their new display order, all within
+// the same placement group. Writes are sequential (banner counts are tiny)
+// so a partial failure still leaves a consistent, readable ordering.
+async function reorderBanners(ids) {
+  const updated = [];
+  for (let i = 0; i < ids.length; i += 1) {
+    const banner = await updateBanner(ids[i], { sort_order: i + 1 });
+    if (banner) updated.push(banner);
+  }
+  return updated;
+}
+
+// Bulk select -> Activate / Deactivate / Delete from the admin table.
+async function bulkUpdateBanners(ids, patch) {
+  const clean = sanitizeBannerInput(patch);
+  const updated = [];
+  for (const id of ids) {
+    const banner = await updateBanner(id, clean);
+    if (banner) updated.push(banner);
+  }
+  return updated;
+}
+
+async function bulkDeleteBanners(ids) {
+  let count = 0;
+  for (const id of ids) {
+    if (await deleteBanner(id)) count += 1;
+  }
+  return count;
 }
 
 // --- Order history for a specific logged-in customer ---
@@ -1418,9 +1524,15 @@ module.exports = {
   addNewsletterSubscriber,
   addContactMessage,
   listBanners,
+  getBannerById,
   createBanner,
   updateBanner,
   deleteBanner,
+  duplicateBanner,
+  reorderBanners,
+  bulkUpdateBanners,
+  bulkDeleteBanners,
+  computeBannerStatus,
   listAddresses,
   createAddress,
   updateAddress,

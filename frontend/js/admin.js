@@ -697,20 +697,26 @@ const BANNER_PLACEMENTS = [
   { value: 'sitewide_announcement', label: 'Sitewide Announcement Strip' },
 ];
 
-// Sets background-position on the frontend (see home-content.js) — which
-// part of the photo stays visible/centered when it's cropped to fill the
-// frame (Fit: "Fill frame") or where it sits within any letterboxed space
-// (Fit: "Show whole photo").
-const BANNER_POSITION_OPTIONS = [
-  { value: 'left top', label: 'Top left' },
-  { value: 'center top', label: 'Top center' },
-  { value: 'right top', label: 'Top right' },
-  { value: 'left center', label: 'Middle left' },
-  { value: 'center center', label: 'Center (default)' },
-  { value: 'right center', label: 'Middle right' },
-  { value: 'left bottom', label: 'Bottom left' },
-  { value: 'center bottom', label: 'Bottom center' },
-  { value: 'right bottom', label: 'Bottom right' },
+// Draft/Scheduled/Active/Expired — computed server-side (dataStore.js
+// computeBannerStatus) from is_active + scheduled_start/scheduled_end.
+const BANNER_STATUS_META = {
+  draft: { label: 'Draft', pill: 'status-draft' },
+  scheduled: { label: 'Scheduled', pill: 'status-scheduled' },
+  active: { label: 'Active', pill: 'status-active' },
+  expired: { label: 'Expired', pill: 'status-expired' },
+};
+
+// Live-preview width presets for the crop/zoom editor. MOBILE_BREAKPOINT_PX
+// must match the swap point the real homepage uses (frontend/js/home-content.js
+// — window.matchMedia('(max-width: 768px)')), so a width toggled here shows
+// exactly the crop that width would actually get on the live site.
+const MOBILE_BREAKPOINT_PX = 768;
+const PREVIEW_WIDTHS = [
+  { key: 'desktop', label: 'Desktop', px: 1440 },
+  { key: 'laptop', label: 'Laptop', px: 1024 },
+  { key: 'tablet', label: 'Tablet', px: 768 },
+  { key: 'mobile', label: 'Mobile', px: 390 },
+  { key: 'small', label: 'Small phone', px: 320 },
 ];
 
 function placementLabel(value) {
@@ -718,223 +724,569 @@ function placementLabel(value) {
   return found ? found.label : value;
 }
 
+function bannerEscapeHtml(str) {
+  return String(str || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Could not read that file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// <input type="datetime-local"> <-> ISO string, both directions tolerate
+// empty/invalid input by returning '' / null (an unset schedule bound).
+function isoToDatetimeLocal(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function datetimeLocalToIso(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function formatScheduleRange(b) {
+  if (!b.scheduled_start && !b.scheduled_end) return '—';
+  const fmt = (iso) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return `${b.scheduled_start ? fmt(b.scheduled_start) : 'now'} → ${b.scheduled_end ? fmt(b.scheduled_end) : 'no end'}`;
+}
+
+// Reusable drag-to-reposition + zoom-slider crop tool. Mounts into
+// `container`; the math it applies (object-position % + transform:scale
+// around that same point) is exactly what the live site applies to its
+// background-image banners (background-position + transform:scale/-origin
+// via --banner-focus-x/-y/--banner-zoom — see .hero__slide in style.css), so
+// what's shown here is what ships.
+function mountCropTool(container, { imageUrl, focusX = 50, focusY = 50, zoom = 1, onChange }) {
+  const state = { focusX, focusY, zoom };
+  container.innerHTML = `
+    <div class="crop-tool">
+      <div class="crop-tool__stage" style="aspect-ratio:16/9;">
+        ${imageUrl ? `<img class="crop-tool__img" src="${imageUrl}" draggable="false" alt="" />` : ''}
+        <div class="crop-tool__crosshair"></div>
+      </div>
+      <div class="crop-tool__zoom">
+        <span>Zoom</span>
+        <input type="range" min="100" max="300" step="1" value="${Math.round(zoom * 100)}" />
+        <span class="crop-zoom-readout mono">${zoom.toFixed(2)}x</span>
+      </div>
+      <p class="crop-tool__hint">Drag the image to reposition the focal point — this is exactly how it'll be framed on the site.</p>
+    </div>
+  `;
+  const stage = container.querySelector('.crop-tool__stage');
+  const crosshair = container.querySelector('.crop-tool__crosshair');
+  const zoomInput = container.querySelector('input[type="range"]');
+  const zoomReadout = container.querySelector('.crop-zoom-readout');
+  let img = container.querySelector('.crop-tool__img');
+
+  function apply() {
+    if (img) {
+      img.style.objectFit = 'cover';
+      img.style.objectPosition = `${state.focusX}% ${state.focusY}%`;
+      img.style.transform = `scale(${state.zoom})`;
+      img.style.transformOrigin = `${state.focusX}% ${state.focusY}%`;
+    }
+    crosshair.style.left = `${state.focusX}%`;
+    crosshair.style.top = `${state.focusY}%`;
+    zoomReadout.textContent = `${state.zoom.toFixed(2)}x`;
+  }
+  apply();
+
+  function pointFromEvent(e) {
+    const rect = stage.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    return { x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) };
+  }
+  function movePoint(e) {
+    const p = pointFromEvent(e);
+    state.focusX = Math.round(p.x * 10) / 10;
+    state.focusY = Math.round(p.y * 10) / 10;
+    apply();
+    if (onChange) onChange({ ...state });
+  }
+  let dragging = false;
+  stage.addEventListener('pointerdown', (e) => {
+    if (!img) return;
+    dragging = true;
+    stage.classList.add('is-panning');
+    stage.setPointerCapture(e.pointerId);
+    movePoint(e);
+  });
+  stage.addEventListener('pointermove', (e) => { if (dragging) movePoint(e); });
+  const stopDrag = (e) => {
+    dragging = false;
+    stage.classList.remove('is-panning');
+    try { stage.releasePointerCapture(e.pointerId); } catch (_) { /* not captured */ }
+  };
+  stage.addEventListener('pointerup', stopDrag);
+  stage.addEventListener('pointerleave', stopDrag);
+  zoomInput.addEventListener('input', () => {
+    state.zoom = parseInt(zoomInput.value, 10) / 100;
+    apply();
+    if (onChange) onChange({ ...state });
+  });
+
+  return {
+    getState() { return { ...state }; },
+    setImage(url) {
+      if (!img) {
+        stage.insertAdjacentHTML('afterbegin', `<img class="crop-tool__img" src="${url}" draggable="false" alt="" />`);
+        img = stage.querySelector('.crop-tool__img');
+      } else {
+        img.src = url;
+      }
+      apply();
+    },
+  };
+}
+
+// Module-level so filters/selection survive a re-render triggered from
+// inside the tab (e.g. after a reorder or bulk action), but reset whenever
+// the tab is opened fresh from the dashboard nav.
+let bannerFilters = { search: '', placement: '', status: '' };
+let bannerSelected = new Set();
+let bannerAllCache = [];
+
+function filteredBanners() {
+  const q = bannerFilters.search.trim().toLowerCase();
+  return bannerAllCache.filter((b) => {
+    if (bannerFilters.placement && b.placement !== bannerFilters.placement) return false;
+    if (bannerFilters.status && b.status !== bannerFilters.status) return false;
+    if (q && !`${b.title || ''} ${b.subtitle || ''}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
 async function renderBannersTab() {
+  bannerFilters = { search: '', placement: '', status: '' };
+  bannerSelected = new Set();
   const wrap = document.getElementById('tab-content');
   wrap.innerHTML = '<p>Loading banners…</p>';
   const { banners } = await api('/api/banners');
+  bannerAllCache = banners;
 
   wrap.innerHTML = `
-    <div class="card" style="margin-bottom:24px;">
-      <h3 class="mt-0">Add a banner</h3>
-      <p style="font-size:0.85rem;color:var(--moss-700);">
-        Use this for the homepage hero slider, festive-offer / promo cards, seasonal sale posters — anything image + link. Pick where it should appear below.
-        Images are stored as-is for now (demo mode); once Supabase Storage is connected, uploads move there automatically.
-      </p>
-      <div class="form-row">
-        <div class="form-field">
-          <label for="b-placement">Where should this appear?</label>
-          <select id="b-placement">${BANNER_PLACEMENTS.map((p) => `<option value="${p.value}">${p.label}</option>`).join('')}</select>
-        </div>
-        <div class="form-field"><label for="b-sort">Order (lower shows first)</label><input id="b-sort" type="number" min="0" value="1" /></div>
+    <div class="card" style="margin-bottom:20px;" id="banner-editor-card"></div>
+    <div class="card">
+      <div class="banner-toolbar">
+        <input type="search" id="banner-search" placeholder="Search title or subtitle…" style="min-width:220px;" />
+        <select id="banner-filter-placement">
+          <option value="">All placements</option>
+          ${BANNER_PLACEMENTS.map((p) => `<option value="${p.value}">${p.label}</option>`).join('')}
+        </select>
+        <select id="banner-filter-status">
+          <option value="">All statuses</option>
+          ${Object.entries(BANNER_STATUS_META).map(([key, meta]) => `<option value="${key}">${meta.label}</option>`).join('')}
+        </select>
+        <span class="spacer"></span>
+        <button class="btn btn--primary btn--sm" id="banner-add-btn">+ Add banner</button>
       </div>
-      <div class="form-field"><label for="b-title">Title</label><input id="b-title" placeholder="e.g. Diwali Sale" /></div>
-      <div class="form-field"><label for="b-subtitle">Subtitle / offer text (optional)</label><input id="b-subtitle" placeholder="e.g. 20% off, this week only" /></div>
-      <div class="form-field"><label for="b-file">Image (Desktop)</label><input id="b-file" type="file" accept="image/*" /></div>
-      <div class="form-field">
-        <label for="b-file-mobile">Image (Mobile) — optional</label>
-        <input id="b-file-mobile" type="file" accept="image/*" />
-        <p style="font-size:0.8rem;color:var(--moss-700);margin:4px 0 0;">If left blank, the desktop image is used and cropped to fit — set this if the desktop photo has text or a subject that gets cut off on a phone screen.</p>
-      </div>
-      <div class="form-row">
-        <div class="form-field">
-          <label for="b-position">Focus point</label>
-          <select id="b-position">${BANNER_POSITION_OPTIONS.map((p) => `<option value="${p.value}">${p.label}</option>`).join('')}</select>
-        </div>
-        <div class="form-field">
-          <label for="b-fit">Fit</label>
-          <select id="b-fit">
-            <option value="cover">Fill frame (crops edges)</option>
-            <option value="contain">Show whole photo (may letterbox)</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-field"><label for="b-link">Link (optional)</label><input id="b-link" placeholder="/shop" /></div>
-      <button class="btn btn--primary" id="add-banner-btn">Add Banner</button>
-      <p class="form-error" id="add-banner-error" style="display:none;"></p>
+      <div id="banner-bulk-bar"></div>
+      <div id="banner-table-wrap"></div>
     </div>
-    <div id="banners-by-placement"></div>
   `;
 
-  const byPlacement = document.getElementById('banners-by-placement');
-  if (!banners.length) {
-    byPlacement.innerHTML = '<div class="empty-state">No banners yet.</div>';
-  } else {
-    const groups = {};
-    banners.forEach((b) => {
-      const key = b.placement || 'homepage_hero';
-      (groups[key] = groups[key] || []).push(b);
+  renderBannerEditor(null); // closed/empty by default
+
+  document.getElementById('banner-search').addEventListener('input', (e) => {
+    bannerFilters.search = e.target.value;
+    renderBannerTable();
+  });
+  document.getElementById('banner-filter-placement').addEventListener('change', (e) => {
+    bannerFilters.placement = e.target.value;
+    renderBannerTable();
+  });
+  document.getElementById('banner-filter-status').addEventListener('change', (e) => {
+    bannerFilters.status = e.target.value;
+    renderBannerTable();
+  });
+  document.getElementById('banner-add-btn').addEventListener('click', () => renderBannerEditor({}));
+
+  renderBannerTable();
+}
+
+function renderBannerBulkBar() {
+  const bar = document.getElementById('banner-bulk-bar');
+  if (!bar) return;
+  if (!bannerSelected.size) {
+    bar.innerHTML = '';
+    return;
+  }
+  bar.innerHTML = `
+    <div class="bulk-bar">
+      <strong>${bannerSelected.size} selected</strong>
+      <span class="spacer"></span>
+      <button class="btn btn--outline btn--sm" data-bulk="activate" style="color:inherit;border-color:rgba(255,255,255,0.5);">Activate</button>
+      <button class="btn btn--outline btn--sm" data-bulk="deactivate" style="color:inherit;border-color:rgba(255,255,255,0.5);">Set to Draft</button>
+      <button class="btn btn--outline btn--sm" data-bulk="delete" style="color:inherit;border-color:rgba(255,255,255,0.5);">Delete</button>
+    </div>
+  `;
+  bar.querySelectorAll('[data-bulk]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const action = btn.getAttribute('data-bulk');
+      const ids = [...bannerSelected];
+      if (action === 'delete' && !confirm(`Delete ${ids.length} banner(s)? This can't be undone.`)) return;
+      await api('/api/banners/bulk', { method: 'POST', body: { ids, action } });
+      bannerSelected = new Set();
+      const { banners } = await api('/api/banners');
+      bannerAllCache = banners;
+      renderBannerTable();
     });
-    byPlacement.innerHTML = Object.entries(groups)
-      .map(
-        ([placement, items]) => `
-        <h4 style="margin:24px 0 10px;">${placementLabel(placement)}</h4>
-        <div class="products-grid">
-          ${items
-            .map(
-              (b) => `
-            <div class="card" data-banner="${b.id}">
-              <img src="${b.image_url}" alt="${b.title || ''}" style="width:100%;border-radius:8px;margin-bottom:8px;aspect-ratio:16/9;object-fit:cover;" />
-              <strong>${b.title || 'Untitled'}</strong>
-              ${b.subtitle ? `<p style="font-size:0.85rem;color:var(--moss-700);margin:4px 0;">${b.subtitle}</p>` : ''}
-              <p style="font-size:0.78rem;color:var(--moss-700);margin:6px 0 2px;">
-                Mobile image: ${b.image_url_mobile ? 'set' : 'not set (desktop image is cropped for phones)'}
-              </p>
-              <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
-                <input type="file" accept="image/*" data-mobile-image-input="${b.id}" style="flex:1;font-size:0.78rem;" />
-                ${b.image_url_mobile ? `<button class="btn btn--outline btn--sm" data-clear-mobile-image="${b.id}">Clear</button>` : ''}
-              </div>
-              <div class="form-row" style="margin-bottom:0;">
-                <div class="form-field" style="margin-bottom:8px;">
-                  <label style="font-size:0.78rem;">Focus point</label>
-                  <select data-banner-position="${b.id}" style="font-size:0.8rem;">
-                    ${BANNER_POSITION_OPTIONS.map((p) => `<option value="${p.value}" ${(b.image_position || 'center center') === p.value ? 'selected' : ''}>${p.label}</option>`).join('')}
-                  </select>
-                </div>
-                <div class="form-field" style="margin-bottom:8px;">
-                  <label style="font-size:0.78rem;">Fit</label>
-                  <select data-banner-fit="${b.id}" style="font-size:0.8rem;">
-                    <option value="cover" ${(b.image_fit || 'cover') === 'cover' ? 'selected' : ''}>Fill frame</option>
-                    <option value="contain" ${b.image_fit === 'contain' ? 'selected' : ''}>Show whole photo</option>
-                  </select>
-                </div>
-              </div>
-              <div class="flex-between" style="margin-top:8px;">
-                <label style="font-size:0.8rem;display:flex;align-items:center;gap:6px;">
-                  <input type="checkbox" data-banner-active="${b.id}" ${b.is_active ? 'checked' : ''} /> Active
-                </label>
-                <button class="btn btn--outline btn--sm" data-delete-banner="${b.id}">Delete</button>
-              </div>
-            </div>`
-            )
-            .join('')}
-        </div>`
-      )
+  });
+}
+
+function renderBannerTable() {
+  const tableWrap = document.getElementById('banner-table-wrap');
+  renderBannerBulkBar();
+  const items = filteredBanners();
+  if (!bannerAllCache.length) {
+    tableWrap.innerHTML = '<div class="empty-state">No banners yet — add one above.</div>';
+    return;
+  }
+  if (!items.length) {
+    tableWrap.innerHTML = '<div class="empty-state">No banners match your search/filters.</div>';
+    return;
+  }
+
+  // Grouped by placement (each group is its own drag-reorder scope, since
+  // sort_order is only meaningful within a placement) unless a single
+  // placement is already selected, in which case one flat table reads better.
+  const groups = {};
+  items.forEach((b) => {
+    const key = b.placement || 'homepage_hero';
+    (groups[key] = groups[key] || []).push(b);
+  });
+
+  function bannerRowHtml(b) {
+    const meta = BANNER_STATUS_META[b.status] || BANNER_STATUS_META.draft;
+    const thumb = b.image_url_mobile || b.image_url;
+    return `
+      <tr class="banner-row" draggable="true" data-banner-row="${b.id}">
+        <td style="width:26px;"><input type="checkbox" data-banner-select="${b.id}" ${bannerSelected.has(b.id) ? 'checked' : ''} /></td>
+        <td style="width:22px;"><span class="banner-drag-handle" title="Drag to reorder">⠿</span></td>
+        <td><img class="banner-row-thumb" src="${thumb}" alt="" /></td>
+        <td>
+          <strong>${bannerEscapeHtml(b.title) || 'Untitled'}</strong>
+          ${b.subtitle ? `<div style="font-size:0.8rem;color:var(--moss-700);">${bannerEscapeHtml(b.subtitle)}</div>` : ''}
+        </td>
+        <td><span class="status-pill ${meta.pill}">${meta.label}</span></td>
+        <td class="banner-schedule-text">${formatScheduleRange(b)}</td>
+        <td>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn--outline btn--sm" data-banner-edit="${b.id}">Edit</button>
+            <button class="btn btn--outline btn--sm" data-banner-duplicate="${b.id}">Duplicate</button>
+            <button class="btn btn--danger btn--sm" data-banner-delete="${b.id}">Delete</button>
+          </div>
+        </td>
+      </tr>`;
+  }
+
+  function tableHtml(rows) {
+    return `
+      <table class="data-table" style="margin-top:10px;">
+        <thead><tr><th></th><th></th><th>Image</th><th>Title</th><th>Status</th><th>Schedule</th><th></th></tr></thead>
+        <tbody>${rows.map(bannerRowHtml).join('')}</tbody>
+      </table>`;
+  }
+
+  if (bannerFilters.placement) {
+    tableWrap.innerHTML = tableHtml(items);
+  } else {
+    tableWrap.innerHTML = Object.entries(groups)
+      .map(([placement, rows]) => `<h4 style="margin:20px 0 4px;">${placementLabel(placement)}</h4>${tableHtml(rows)}`)
       .join('');
   }
 
-  byPlacement.querySelectorAll('[data-delete-banner]').forEach((btn) => {
+  wireBannerRowEvents(tableWrap);
+}
+
+function wireBannerRowEvents(tableWrap) {
+  tableWrap.querySelectorAll('[data-banner-select]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const id = cb.getAttribute('data-banner-select');
+      if (cb.checked) bannerSelected.add(id); else bannerSelected.delete(id);
+      renderBannerBulkBar();
+    });
+  });
+  tableWrap.querySelectorAll('[data-banner-edit]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const banner = bannerAllCache.find((b) => b.id === btn.getAttribute('data-banner-edit'));
+      if (banner) renderBannerEditor(banner);
+    });
+  });
+  tableWrap.querySelectorAll('[data-banner-duplicate]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await api(`/api/banners/${btn.getAttribute('data-banner-duplicate')}/duplicate`, { method: 'POST' });
+      const { banners } = await api('/api/banners');
+      bannerAllCache = banners;
+      renderBannerTable();
+    });
+  });
+  tableWrap.querySelectorAll('[data-banner-delete]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (!confirm('Delete this banner?')) return;
-      await api(`/api/banners/${btn.getAttribute('data-delete-banner')}`, { method: 'DELETE' });
-      renderBannersTab();
-    });
-  });
-  byPlacement.querySelectorAll('[data-banner-active]').forEach((input) => {
-    input.addEventListener('change', async () => {
-      await api(`/api/banners/${input.getAttribute('data-banner-active')}`, {
-        method: 'PATCH',
-        body: { is_active: input.checked },
-      });
-    });
-  });
-  byPlacement.querySelectorAll('[data-banner-position]').forEach((select) => {
-    select.addEventListener('change', async () => {
-      try {
-        await api(`/api/banners/${select.getAttribute('data-banner-position')}`, {
-          method: 'PATCH',
-          body: { image_position: select.value },
-        });
-      } catch (err) {
-        alert(err.message || 'Could not update the focus point.');
-      }
-    });
-  });
-  byPlacement.querySelectorAll('[data-banner-fit]').forEach((select) => {
-    select.addEventListener('change', async () => {
-      try {
-        await api(`/api/banners/${select.getAttribute('data-banner-fit')}`, {
-          method: 'PATCH',
-          body: { image_fit: select.value },
-        });
-      } catch (err) {
-        alert(err.message || 'Could not update the fit.');
-      }
+      await api(`/api/banners/${btn.getAttribute('data-banner-delete')}`, { method: 'DELETE' });
+      const { banners } = await api('/api/banners');
+      bannerAllCache = banners;
+      bannerSelected.delete(btn.getAttribute('data-banner-delete'));
+      renderBannerTable();
     });
   });
 
-  // Set/replace just the mobile crop on an existing banner — picking a file
-  // uploads immediately rather than needing a separate "Save" click, since
-  // this is a single-purpose control.
-  byPlacement.querySelectorAll('[data-mobile-image-input]').forEach((input) => {
-    input.addEventListener('change', async () => {
-      const file = input.files[0];
-      if (!file) return;
-      try {
-        const image_url_mobile = await readFileAsDataUrl(file);
-        await api(`/api/banners/${input.getAttribute('data-mobile-image-input')}`, {
-          method: 'PATCH',
-          body: { image_url_mobile },
-        });
-        renderBannersTab();
-      } catch (err) {
-        alert(err.message || 'Could not upload the mobile image.');
-      }
+  // Drag-and-drop reorder, scoped to whichever <tbody> the drag started in
+  // (i.e. within one placement group) so cross-group drags are a no-op.
+  let dragId = null;
+  tableWrap.querySelectorAll('tr.banner-row').forEach((row) => {
+    row.addEventListener('dragstart', () => {
+      dragId = row.getAttribute('data-banner-row');
+      row.classList.add('is-dragging');
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('is-dragging');
+      tableWrap.querySelectorAll('.drag-over-top,.drag-over-bottom').forEach((r) => r.classList.remove('drag-over-top', 'drag-over-bottom'));
+    });
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (row.getAttribute('data-banner-row') === dragId) return;
+      if (row.parentElement !== tableWrap.querySelector(`tr[data-banner-row="${dragId}"]`)?.parentElement) return;
+      const rect = row.getBoundingClientRect();
+      const before = e.clientY - rect.top < rect.height / 2;
+      row.classList.toggle('drag-over-top', before);
+      row.classList.toggle('drag-over-bottom', !before);
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drag-over-top', 'drag-over-bottom'));
+    row.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const targetId = row.getAttribute('data-banner-row');
+      const before = row.classList.contains('drag-over-top');
+      row.classList.remove('drag-over-top', 'drag-over-bottom');
+      if (!dragId || dragId === targetId) return;
+      const tbody = row.parentElement;
+      if (tbody !== tableWrap.querySelector(`tr[data-banner-row="${dragId}"]`)?.parentElement) return; // different placement group
+      const ids = [...tbody.querySelectorAll('tr.banner-row')].map((r) => r.getAttribute('data-banner-row'));
+      const from = ids.indexOf(dragId);
+      ids.splice(from, 1);
+      const to = ids.indexOf(targetId) + (before ? 0 : 1);
+      ids.splice(to, 0, dragId);
+      await api('/api/banners/reorder', { method: 'POST', body: { ids } });
+      const { banners } = await api('/api/banners');
+      bannerAllCache = banners;
+      renderBannerTable();
     });
   });
-  byPlacement.querySelectorAll('[data-clear-mobile-image]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      await api(`/api/banners/${btn.getAttribute('data-clear-mobile-image')}`, {
-        method: 'PATCH',
-        body: { image_url_mobile: null },
-      });
-      renderBannersTab();
+}
+
+// Add/edit panel. `banner` is {} for a brand-new banner, an existing banner
+// object to edit, or null to close/clear the panel.
+function renderBannerEditor(banner) {
+  const card = document.getElementById('banner-editor-card');
+  if (!card) return;
+  if (banner === null) {
+    card.innerHTML = '';
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+  const isEdit = !!banner.id;
+  const form = {
+    title: banner.title || '',
+    subtitle: banner.subtitle || '',
+    link_url: banner.link_url || '',
+    placement: banner.placement || 'homepage_hero',
+    sort_order: banner.sort_order || 1,
+    is_active: banner.is_active !== undefined ? banner.is_active : false,
+    scheduled_start: banner.scheduled_start || null,
+    scheduled_end: banner.scheduled_end || null,
+    image_url: banner.image_url || '',
+    image_url_mobile: banner.image_url_mobile || '',
+    image_focus_x: banner.image_focus_x !== undefined ? banner.image_focus_x : 50,
+    image_focus_y: banner.image_focus_y !== undefined ? banner.image_focus_y : 50,
+    image_zoom: banner.image_zoom || 1,
+    image_focus_x_mobile: banner.image_focus_x_mobile,
+    image_focus_y_mobile: banner.image_focus_y_mobile,
+    image_zoom_mobile: banner.image_zoom_mobile,
+  };
+  let activePreviewWidth = 'desktop';
+
+  card.innerHTML = `
+    <div class="flex-between">
+      <h3 class="mt-0">${isEdit ? 'Edit banner' : 'Add a banner'}</h3>
+      <button class="btn btn--outline btn--sm" id="banner-editor-close">Close</button>
+    </div>
+    <div class="form-row">
+      <div class="form-field">
+        <label for="be-placement">Where should this appear?</label>
+        <select id="be-placement">${BANNER_PLACEMENTS.map((p) => `<option value="${p.value}" ${p.value === form.placement ? 'selected' : ''}>${p.label}</option>`).join('')}</select>
+      </div>
+      <div class="form-field"><label for="be-sort">Order (lower shows first)</label><input id="be-sort" type="number" min="0" value="${form.sort_order}" /></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field"><label for="be-title">Title</label><input id="be-title" placeholder="e.g. Diwali Sale" value="${bannerEscapeHtml(form.title)}" /></div>
+      <div class="form-field"><label for="be-link">Link (optional)</label><input id="be-link" placeholder="/shop" value="${bannerEscapeHtml(form.link_url)}" /></div>
+    </div>
+    <div class="form-field"><label for="be-subtitle">Subtitle / offer text (optional)</label><input id="be-subtitle" placeholder="e.g. 20% off, this week only" value="${bannerEscapeHtml(form.subtitle)}" /></div>
+
+    <div class="form-row">
+      <div class="form-field">
+        <label for="be-start">Scheduled start (optional)</label>
+        <input id="be-start" type="datetime-local" value="${isoToDatetimeLocal(form.scheduled_start)}" />
+      </div>
+      <div class="form-field">
+        <label for="be-end">Scheduled end (optional)</label>
+        <input id="be-end" type="datetime-local" value="${isoToDatetimeLocal(form.scheduled_end)}" />
+      </div>
+    </div>
+    <p style="font-size:0.8rem;color:var(--moss-700);margin-top:-10px;">
+      Leave both blank to publish immediately once switched on. Set a start and/or end to have it go live and expire on its own — status below updates automatically, no need to come back and flip anything.
+    </p>
+    <label style="font-size:0.85rem;display:flex;align-items:center;gap:8px;margin:10px 0 18px;">
+      <input type="checkbox" id="be-active" ${form.is_active ? 'checked' : ''} /> Published (switch off to keep as a Draft)
+    </label>
+
+    <div class="form-field">
+      <label>Desktop image</label>
+      <input id="be-file" type="file" accept="image/*" />
+      <div id="be-crop-desktop" style="margin-top:10px;"></div>
+    </div>
+    <div class="form-field">
+      <label>Mobile image (optional — falls back to the desktop image + crop if left blank)</label>
+      <input id="be-file-mobile" type="file" accept="image/*" />
+      <div id="be-crop-mobile" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="form-field">
+      <label>Live preview</label>
+      <div class="preview-widths">
+        ${PREVIEW_WIDTHS.map((w) => `<button type="button" data-preview-width="${w.key}" class="${w.key === activePreviewWidth ? 'active' : ''}">${w.label} (${w.px}px)</button>`).join('')}
+      </div>
+      <div class="preview-frame" id="be-preview-frame">
+        <div class="preview-frame__slide"><img id="be-preview-img" src="" alt="" /></div>
+        <div class="preview-frame__caption" id="be-preview-caption"></div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+      <button class="btn btn--primary" id="banner-save-btn">${isEdit ? 'Save changes' : 'Add banner'}</button>
+      <button class="btn btn--outline" id="banner-cancel-btn">Cancel</button>
+      <p class="form-error" id="banner-editor-error" style="display:none;margin:0;"></p>
+    </div>
+  `;
+
+  const desktopCropEl = document.getElementById('be-crop-desktop');
+  const mobileCropEl = document.getElementById('be-crop-mobile');
+  let desktopCrop = null;
+  let mobileCrop = null;
+
+  function refreshPreview() {
+    const widthDef = PREVIEW_WIDTHS.find((w) => w.key === activePreviewWidth) || PREVIEW_WIDTHS[0];
+    const frame = document.getElementById('be-preview-frame');
+    const img = document.getElementById('be-preview-img');
+    const caption = document.getElementById('be-preview-caption');
+    // Scale the preview frame to fit the panel while still visually showing
+    // the target width via its own max-width, same breakpoint logic the
+    // real homepage uses (frontend/js/home-content.js).
+    frame.style.width = `${Math.min(widthDef.px, 640)}px`;
+    const useMobile = widthDef.px <= MOBILE_BREAKPOINT_PX && form.image_url_mobile;
+    const src = useMobile ? form.image_url_mobile : form.image_url;
+    const fx = useMobile && form.image_focus_x_mobile != null ? form.image_focus_x_mobile : form.image_focus_x;
+    const fy = useMobile && form.image_focus_y_mobile != null ? form.image_focus_y_mobile : form.image_focus_y;
+    const zoom = useMobile && form.image_zoom_mobile != null ? form.image_zoom_mobile : form.image_zoom;
+    img.src = src || '';
+    img.style.objectFit = 'cover';
+    img.style.objectPosition = `${fx}% ${fy}%`;
+    img.style.transform = `scale(${zoom})`;
+    img.style.transformOrigin = `${fx}% ${fy}%`;
+    caption.textContent = `${widthDef.label} · ${widthDef.px}px wide${useMobile ? ' · using mobile image' : ''}`;
+  }
+
+  if (form.image_url) {
+    desktopCrop = mountCropTool(desktopCropEl, {
+      imageUrl: form.image_url, focusX: form.image_focus_x, focusY: form.image_focus_y, zoom: form.image_zoom,
+      onChange: (s) => { form.image_focus_x = s.focusX; form.image_focus_y = s.focusY; form.image_zoom = s.zoom; refreshPreview(); },
+    });
+  } else {
+    desktopCropEl.innerHTML = '<p class="crop-tool__hint">Choose an image above to position and zoom it.</p>';
+  }
+  if (form.image_url_mobile) {
+    mobileCrop = mountCropTool(mobileCropEl, {
+      imageUrl: form.image_url_mobile,
+      focusX: form.image_focus_x_mobile != null ? form.image_focus_x_mobile : form.image_focus_x,
+      focusY: form.image_focus_y_mobile != null ? form.image_focus_y_mobile : form.image_focus_y,
+      zoom: form.image_zoom_mobile != null ? form.image_zoom_mobile : form.image_zoom,
+      onChange: (s) => { form.image_focus_x_mobile = s.focusX; form.image_focus_y_mobile = s.focusY; form.image_zoom_mobile = s.zoom; refreshPreview(); },
+    });
+  } else {
+    mobileCropEl.innerHTML = '<p class="crop-tool__hint">Optional — upload a separately-cropped image for phones, or leave blank to reuse the desktop image and crop.</p>';
+  }
+  refreshPreview();
+
+  document.getElementById('be-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    form.image_url = await fileToDataUrl(file);
+    form.image_focus_x = 50; form.image_focus_y = 50; form.image_zoom = 1;
+    if (desktopCrop) desktopCrop.setImage(form.image_url);
+    else desktopCrop = mountCropTool(desktopCropEl, { imageUrl: form.image_url, focusX: 50, focusY: 50, zoom: 1, onChange: (s) => { form.image_focus_x = s.focusX; form.image_focus_y = s.focusY; form.image_zoom = s.zoom; refreshPreview(); } });
+    refreshPreview();
+  });
+  document.getElementById('be-file-mobile').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    form.image_url_mobile = await fileToDataUrl(file);
+    form.image_focus_x_mobile = 50; form.image_focus_y_mobile = 50; form.image_zoom_mobile = 1;
+    if (mobileCrop) mobileCrop.setImage(form.image_url_mobile);
+    else mobileCrop = mountCropTool(mobileCropEl, { imageUrl: form.image_url_mobile, focusX: 50, focusY: 50, zoom: 1, onChange: (s) => { form.image_focus_x_mobile = s.focusX; form.image_focus_y_mobile = s.focusY; form.image_zoom_mobile = s.zoom; refreshPreview(); } });
+    refreshPreview();
+  });
+
+  card.querySelectorAll('[data-preview-width]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activePreviewWidth = btn.getAttribute('data-preview-width');
+      card.querySelectorAll('[data-preview-width]').forEach((b) => b.classList.toggle('active', b === btn));
+      refreshPreview();
     });
   });
 
-  document.getElementById('add-banner-btn').addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
-    // Guard against double-submission: this button used to have no
-    // disabled/in-flight state at all, so clicking it more than once while
-    // the (often multi-MB) image was still being read/uploaded — easy to
-    // do, since nothing on screen changed until the request finished —
-    // created one banner per click. Every other async button in this file
-    // already disables itself first; this one just hadn't. Fixed 2026-09-08.
-    if (btn.disabled) return;
-    const errorEl = document.getElementById('add-banner-error');
+  document.getElementById('banner-editor-close').addEventListener('click', () => renderBannerEditor(null));
+  document.getElementById('banner-cancel-btn').addEventListener('click', () => renderBannerEditor(null));
+
+  document.getElementById('banner-save-btn').addEventListener('click', async () => {
+    const errorEl = document.getElementById('banner-editor-error');
     errorEl.style.display = 'none';
-    const file = document.getElementById('b-file').files[0];
-    const mobileFile = document.getElementById('b-file-mobile').files[0];
-    if (!file) {
+    form.title = document.getElementById('be-title').value;
+    form.subtitle = document.getElementById('be-subtitle').value;
+    form.link_url = document.getElementById('be-link').value;
+    form.placement = document.getElementById('be-placement').value;
+    form.sort_order = parseInt(document.getElementById('be-sort').value, 10) || 1;
+    form.is_active = document.getElementById('be-active').checked;
+    form.scheduled_start = datetimeLocalToIso(document.getElementById('be-start').value);
+    form.scheduled_end = datetimeLocalToIso(document.getElementById('be-end').value);
+    if (!form.image_url) {
       errorEl.textContent = 'Choose a desktop image first.';
       errorEl.style.display = 'block';
       return;
     }
-    btn.disabled = true;
-    const originalLabel = btn.textContent;
-    btn.textContent = 'Adding…';
     try {
-      const image_url = await readFileAsDataUrl(file);
-      const image_url_mobile = mobileFile ? await readFileAsDataUrl(mobileFile) : null;
-      await api('/api/banners', {
-        method: 'POST',
-        body: {
-          title: document.getElementById('b-title').value,
-          subtitle: document.getElementById('b-subtitle').value,
-          image_url,
-          image_url_mobile,
-          link_url: document.getElementById('b-link').value,
-          placement: document.getElementById('b-placement').value,
-          sort_order: parseInt(document.getElementById('b-sort').value, 10) || 1,
-          image_position: document.getElementById('b-position').value,
-          image_fit: document.getElementById('b-fit').value,
-        },
-      });
-      renderBannersTab();
+      if (isEdit) {
+        await api(`/api/banners/${banner.id}`, { method: 'PATCH', body: form });
+      } else {
+        await api('/api/banners', { method: 'POST', body: form });
+      }
+      renderBannerEditor(null);
+      const { banners } = await api('/api/banners');
+      bannerAllCache = banners;
+      renderBannerTable();
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.style.display = 'block';
-      btn.disabled = false;
-      btn.textContent = originalLabel;
     }
   });
 }

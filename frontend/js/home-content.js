@@ -60,15 +60,31 @@ async function loadHeroSlider() {
   const heroBgQuery = window.matchMedia('(max-width: 768px)');
   function applyHeroSlideBg(el, b) {
     if (!el || !b) return;
+    const isMobile = heroBgQuery.matches;
     const desktopUrl = `url('${b.image_url}')`;
     const mobileUrl = b.image_url_mobile ? `url('${b.image_url_mobile}')` : desktopUrl;
-    el.style.backgroundImage = heroBgQuery.matches ? mobileUrl : desktopUrl;
+    el.style.backgroundImage = isMobile ? mobileUrl : desktopUrl;
     // Admin-set focus point / fit (Admin → Banners → Focus point / Fit).
     // Small keyword values, not the image data itself, so — unlike
     // background-image above — these are fine to just set as plain inline
     // styles too; no custom-property size concern here.
     el.style.backgroundPosition = b.image_position || 'center center';
     el.style.backgroundSize = b.image_fit || 'cover';
+
+    // Admin → Banners crop/zoom tool: an optional pan + zoom into a focus
+    // point, applied by style.css (.hero__slide transform/transform-origin)
+    // on top of the base position/size set above. These are small numeric
+    // percentages/multipliers, not the image data, so — same reasoning as
+    // background-position/-size above, and unlike background-image — they're
+    // safe to pass through as CSS custom properties. A banner's mobile crop
+    // falls back to its desktop crop when one hasn't been set separately,
+    // matching the image_url_mobile fallback above.
+    const focusX = isMobile && b.image_focus_x_mobile != null ? b.image_focus_x_mobile : b.image_focus_x;
+    const focusY = isMobile && b.image_focus_y_mobile != null ? b.image_focus_y_mobile : b.image_focus_y;
+    const zoom = isMobile && b.image_zoom_mobile != null ? b.image_zoom_mobile : b.image_zoom;
+    el.style.setProperty('--banner-focus-x', `${focusX != null ? focusX : 50}%`);
+    el.style.setProperty('--banner-focus-y', `${focusY != null ? focusY : 50}%`);
+    el.style.setProperty('--banner-zoom', String(zoom != null ? zoom : 1));
   }
 
   slider.innerHTML = banners
@@ -245,14 +261,23 @@ async function loadPromoBanners() {
     const promoBgQuery = window.matchMedia('(max-width: 768px)');
     const imageEls = Array.from(grid.querySelectorAll('.promo-card__image'));
     function applyPromoBg() {
+      const isMobile = promoBgQuery.matches;
       imageEls.forEach((el, i) => {
         const b = banners[i];
         if (!b) return;
         const desktopUrl = `url('${b.image_url}')`;
         const mobileUrl = b.image_url_mobile ? `url('${b.image_url_mobile}')` : desktopUrl;
-        el.style.backgroundImage = promoBgQuery.matches ? mobileUrl : desktopUrl;
+        el.style.backgroundImage = isMobile ? mobileUrl : desktopUrl;
         el.style.backgroundPosition = b.image_position || 'center center';
         el.style.backgroundSize = b.image_fit || 'cover';
+
+        // Crop/zoom tool — see the matching comment in loadHeroSlider above.
+        const focusX = isMobile && b.image_focus_x_mobile != null ? b.image_focus_x_mobile : b.image_focus_x;
+        const focusY = isMobile && b.image_focus_y_mobile != null ? b.image_focus_y_mobile : b.image_focus_y;
+        const zoom = isMobile && b.image_zoom_mobile != null ? b.image_zoom_mobile : b.image_zoom;
+        el.style.setProperty('--banner-focus-x', `${focusX != null ? focusX : 50}%`);
+        el.style.setProperty('--banner-focus-y', `${focusY != null ? focusY : 50}%`);
+        el.style.setProperty('--banner-zoom', String(zoom != null ? zoom : 1));
       });
     }
     applyPromoBg();

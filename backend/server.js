@@ -11,6 +11,7 @@ const orderRoutes = require('./routes/orders');
 const paymentRoutes = require('./routes/payments');
 const invoiceRoutes = require('./routes/invoice');
 const miscRoutes = require('./routes/misc');
+const bannerRoutes = require('./routes/banners');
 const customerRoutes = require('./routes/customer');
 const customersRoutes = require('./routes/customers'); // admin/staff "Customers" tab (plural — distinct from the self-service /api/customer above)
 const reviewRoutes = require('./routes/reviews');
@@ -33,8 +34,10 @@ app.use(compression());
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || true, credentials: true }));
 // Default body limit is 100kb — far too small once product/banner images are
 // uploaded as base64 data URLs (demo mode, before Supabase Storage is wired
-// up for real uploads). 15mb comfortably covers a compressed photo.
-app.use(express.json({ limit: '15mb' }));
+// up for real uploads). Raised again from 15mb to 20mb: the new banner crop
+// tool's edit form can submit a desktop AND mobile image together in one
+// request, which can add up even with compressed photos.
+app.use(express.json({ limit: '20mb' }));
 app.use(attachUser);
 
 // --- API routes ---
@@ -43,7 +46,8 @@ app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/orders', invoiceRoutes); // adds GET /api/orders/:id/invoice
 app.use('/api/payments', paymentRoutes);
-app.use('/api', miscRoutes); // /api/newsletter, /api/contact, /api/banners
+app.use('/api', miscRoutes); // /api/newsletter, /api/contact
+app.use('/api/banners', bannerRoutes); // homepage hero/promo/announcement banners
 app.use('/api/customer', customerRoutes); // addresses, order history, wishlist
 app.use('/api/customers', customersRoutes); // admin/staff-only customer directory
 app.use('/api', reviewRoutes); // /api/products/:slug/reviews, /api/reviews/:id

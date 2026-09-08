@@ -120,6 +120,12 @@ const products = [
 const PROMO_TAG_OPTIONS = ['Sale Live', 'New Deal', 'Best Seller', 'Festive Offer', 'Limited Stock', 'Bundle Deal'];
 
 const orders = [];
+// image_focus_x/y (0-100, percent from top-left) + image_zoom (1 = normal
+// cover fit) are the admin's saved drag-to-position-and-zoom crop — see
+// computeBannerStatus() in dataStore.js for how scheduled_start/end +
+// is_active combine into the Draft/Scheduled/Active/Expired status shown in
+// Admin -> Banners, and frontend/js/home-content.js for how focus/zoom is
+// applied on the actual storefront.
 const banners = [
   {
     id: 'banner-seed-1',
@@ -131,8 +137,14 @@ const banners = [
     placement: 'homepage_hero',
     is_active: true,
     sort_order: 1,
-    start_at: null,
-    end_at: null,
+    scheduled_start: null,
+    scheduled_end: null,
+    image_focus_x: 50,
+    image_focus_y: 50,
+    image_zoom: 1,
+    image_focus_x_mobile: null,
+    image_focus_y_mobile: null,
+    image_zoom_mobile: null,
   },
   {
     id: 'banner-seed-2',
@@ -144,8 +156,14 @@ const banners = [
     placement: 'homepage_hero',
     is_active: true,
     sort_order: 2,
-    start_at: null,
-    end_at: null,
+    scheduled_start: null,
+    scheduled_end: null,
+    image_focus_x: 50,
+    image_focus_y: 50,
+    image_zoom: 1,
+    image_focus_x_mobile: null,
+    image_focus_y_mobile: null,
+    image_zoom_mobile: null,
   },
   {
     id: 'banner-seed-3',
@@ -157,20 +175,33 @@ const banners = [
     placement: 'homepage_hero',
     is_active: true,
     sort_order: 3,
-    start_at: null,
-    end_at: null,
+    scheduled_start: null,
+    scheduled_end: null,
+    image_focus_x: 50,
+    image_focus_y: 50,
+    image_zoom: 1,
+    image_focus_x_mobile: null,
+    image_focus_y_mobile: null,
+    image_zoom_mobile: null,
   },
   {
     id: 'banner-seed-4',
     title: "Nature's Goodness, Now at a Special Price",
     subtitle: 'Get 20% off your first order — use code GROOVE20.',
     image_url: '/assets/marketing-panels.jpg',
+    image_url_mobile: null,
     link_url: '/shop',
     placement: 'homepage_promo',
     is_active: true,
     sort_order: 1,
-    start_at: null,
-    end_at: null,
+    scheduled_start: null,
+    scheduled_end: null,
+    image_focus_x: 50,
+    image_focus_y: 50,
+    image_zoom: 1,
+    image_focus_x_mobile: null,
+    image_focus_y_mobile: null,
+    image_zoom_mobile: null,
   },
 ];
 const newsletterSubscribers = [];
