@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Signing in… — Groove Organics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body style="background:var(--moss-900);">
+
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;">
+  <div class="card" style="max-width:420px;width:100%;text-align:center;">
+    <h3 class="mt-0" id="ic-heading">Signing you in…</h3>
+    <p id="ic-intro" style="color:var(--moss-700);font-size:0.9rem;">One moment — this tab is signing in as the customer whose account you opened from the admin panel.</p>
+
+    <div id="ic-error" style="display:none;">
+      <p class="form-error" id="ic-error-text">This sign-in link is invalid or has expired.</p>
+      <a href="/" class="btn btn--outline" style="width:100%;display:block;text-align:center;">Back to site</a>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+// Reached two ways from Admin -> Customers -> "Log in as":
+//
+// 1. Demo mode — the admin API mints a local session token directly and
+//    opens this page as /impersonate-callback?mode=demo&token=... . We
+//    stash the token, ask the server who it belongs to, then store the
+//    real user object and continue.
+// 2. Real Supabase mode — the admin API calls supabaseAdmin.auth.admin.
+//    generateLink({ type: 'magiclink', ... }) and opens Supabase's own
+//    action_link, which (after Supabase verifies it) redirects back here
+//    with #access_token=...&type=magiclink in the URL hash — same shape
+//    reset-password.html handles for password-recovery links. We read the
+//    access token straight out of the hash and ask Supabase's own Auth
+//    REST API who it belongs to (no SDK needed for that one call).
+
+const headingEl = document.getElementById('ic-heading');
+const introEl = document.getElementById('ic-intro');
+const errorEl = document.getElementById('ic-error');
+const errorTextEl = document.getElementById('ic-error-text');
+
+function showError(message) {
+  headingEl.textContent = 'Could not sign in';
+  introEl.style.display = 'none';
+  errorTextEl.textContent = message || 'This sign-in link is invalid or has expired.';
+  errorEl.style.display = 'block';
+}
+
+function parseHashParams() {
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+  return new URLSearchParams(hash);
+}
+
+async function completeDemoSignIn(token) {
+  // Stash the token first so api()'s auto-attached Authorization header
+  // picks it up for the /api/auth/me call right below.
+  setAuthSession(token, {});
+  const { user } = await api('/api/auth/me');
+  setAuthSession(token, user);
+}
+
+async function completeSupabaseSignIn(accessToken) {
+  const status = await api('/api/status', { auth: false });
+  if (!status.supabaseUrl || !status.supabaseAnonKey) {
+    throw new Error('Sign-in is not fully configured on the server yet — contact the site owner.');
+  }
+  const res = await fetch(`${status.supabaseUrl}/auth/v1/user`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: status.supabaseAnonKey,
+    },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.msg || body.error_description || 'This sign-in link is invalid or has expired.');
+  }
+  const supaUser = await res.json();
+  setAuthSession(accessToken, { email: supaUser.email, id: supaUser.id });
+}
+
+(async () => {
+  const searchParams = new URLSearchParams(window.location.search);
+  const demoToken = searchParams.get('mode') === 'demo' ? searchParams.get('token') : null;
+  const hashParams = parseHashParams();
+  const supabaseAccessToken = hashParams.get('access_token');
+
+  try {
+    if (demoToken) {
+      await completeDemoSignIn(demoToken);
+    } else if (supabaseAccessToken) {
+      await completeSupabaseSignIn(supabaseAccessToken);
+    } else {
+      showError();
+      return;
+    }
+    window.location.replace('/account/dashboard');
+  } catch (err) {
+    clearAuthSession();
+    showError(err.message);
+  }
+})();
+</script>
+</body>
+</html>
