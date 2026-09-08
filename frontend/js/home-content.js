@@ -46,18 +46,31 @@ async function loadHeroSlider() {
 
   // Each banner can optionally carry a separate image_url_mobile (set from
   // Admin → Banners) for a crop that isn't just the desktop photo squeezed
-  // into a tall narrow box — background-size:cover on a landscape photo
-  // full of baked-in text looked cropped/overlapping on phones otherwise.
-  // The two URLs go in as CSS custom properties; the actual switch between
-  // them happens in style.css's max-width:760px media query, so it also
-  // responds correctly to rotation/resize with no JS involved.
+  // into a tall narrow box. This used to be passed to CSS as a custom
+  // property (--bg-desktop/--bg-mobile) so a single max-width:768px media
+  // query could switch between them with no JS resize listener needed —
+  // but banner photos here are uncompressed base64 PNGs several MB each,
+  // and Chrome silently drops a CSS custom property once its value gets
+  // that large: it computes to an empty string instead of erroring, so
+  // background-image: var(--bg-desktop) quietly resolved to nothing and
+  // the hero background stayed blank no matter what the API returned.
+  // Setting background-image directly (not through a custom property) has
+  // no such limit, so the desktop/mobile switch is done here in JS instead,
+  // via matchMedia (still no per-resize-event handler needed).
+  const heroBgQuery = window.matchMedia('(max-width: 768px)');
+  function applyHeroSlideBg(el, b) {
+    if (!el || !b) return;
+    const desktopUrl = `url('${b.image_url}')`;
+    const mobileUrl = b.image_url_mobile ? `url('${b.image_url_mobile}')` : desktopUrl;
+    el.style.backgroundImage = heroBgQuery.matches ? mobileUrl : desktopUrl;
+  }
+
   slider.innerHTML = banners
-    .map((b, i) => {
-      const desktopUrl = `url('${b.image_url}')`;
-      const mobileUrl = b.image_url_mobile ? `url('${b.image_url_mobile}')` : desktopUrl;
-      return `<div class="hero__slide ${i === 0 ? 'is-active' : ''}" style="--bg-desktop:${desktopUrl};--bg-mobile:${mobileUrl}" data-slide="${i}"></div>`;
-    })
+    .map((b, i) => `<div class="hero__slide ${i === 0 ? 'is-active' : ''}" data-slide="${i}"></div>`)
     .join('');
+  const slideEls = Array.from(slider.querySelectorAll('.hero__slide'));
+  slideEls.forEach((el, i) => applyHeroSlideBg(el, banners[i]));
+  heroBgQuery.addEventListener('change', () => slideEls.forEach((el, i) => applyHeroSlideBg(el, banners[i])));
 
   if (banners.length > 1 && dotsWrap) {
     dotsWrap.innerHTML = banners
@@ -208,19 +221,34 @@ async function loadPromoBanners() {
     const { banners } = await api('/api/banners?placement=homepage_promo', { auth: false });
     if (!banners || !banners.length) return;
     grid.innerHTML = banners
-      .map((b) => {
-        const desktopUrl = `url('${b.image_url}')`;
-        const mobileUrl = b.image_url_mobile ? `url('${b.image_url_mobile}')` : desktopUrl;
-        return `
+      .map(
+        (b, i) => `
         <a class="promo-card" href="${b.link_url || '#'}">
-          <div class="promo-card__image" style="--bg-desktop:${desktopUrl};--bg-mobile:${mobileUrl}"></div>
+          <div class="promo-card__image" data-promo="${i}"></div>
           <div class="promo-card__text">
             ${b.title ? `<h4>${escapeHtml(b.title)}</h4>` : ''}
             ${b.subtitle ? `<p>${escapeHtml(b.subtitle)}</p>` : ''}
           </div>
-        </a>`;
-      })
+        </a>`
+      )
       .join('');
+    // See the matching comment in loadHeroSlider above: background-image is
+    // set directly here (not via a CSS custom property) because Chrome
+    // silently drops a custom property's value once it reaches the
+    // multi-megabyte range, which every one of these base64 banner photos does.
+    const promoBgQuery = window.matchMedia('(max-width: 768px)');
+    const imageEls = Array.from(grid.querySelectorAll('.promo-card__image'));
+    function applyPromoBg() {
+      imageEls.forEach((el, i) => {
+        const b = banners[i];
+        if (!b) return;
+        const desktopUrl = `url('${b.image_url}')`;
+        const mobileUrl = b.image_url_mobile ? `url('${b.image_url_mobile}')` : desktopUrl;
+        el.style.backgroundImage = promoBgQuery.matches ? mobileUrl : desktopUrl;
+      });
+    }
+    applyPromoBg();
+    promoBgQuery.addEventListener('change', applyPromoBg);
     section.style.display = '';
   } catch (err) {
     // No promo banners set up yet — leave the section hidden.
