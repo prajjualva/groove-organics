@@ -24,19 +24,23 @@
 
 <script src="/js/api.js"></script>
 <script>
-// Reached two ways from Admin -> Customers -> "Log in as":
+// Reached from Admin -> Customers -> "Log in as", as
+// /impersonate-callback?token=... . The admin API
+// (POST /api/customers/:id/impersonate) already did the actual sign-in
+// server-side — in demo mode by minting a local session token, in live
+// Supabase mode by generating a magic-link OTP and verifying it itself via
+// supabase.auth.verifyOtp() — so what lands here is always just a plain
+// bearer token, the same shape either way. All this page does is stash it
+// and ask the server who it belongs to, exactly like every other page on
+// the site authenticates.
 //
-// 1. Demo mode — the admin API mints a local session token directly and
-//    opens this page as /impersonate-callback?mode=demo&token=... . We
-//    stash the token, ask the server who it belongs to, then store the
-//    real user object and continue.
-// 2. Real Supabase mode — the admin API calls supabaseAdmin.auth.admin.
-//    generateLink({ type: 'magiclink', ... }) and opens Supabase's own
-//    action_link, which (after Supabase verifies it) redirects back here
-//    with #access_token=...&type=magiclink in the URL hash — same shape
-//    reset-password.html handles for password-recovery links. We read the
-//    access token straight out of the hash and ask Supabase's own Auth
-//    REST API who it belongs to (no SDK needed for that one call).
+// (Earlier version of this page expected a Supabase magic-link REDIRECT —
+// #access_token=... in the hash — which only works if the exact redirect
+// URL is also added to Supabase's Authentication -> URL Configuration ->
+// Redirect URLs allowlist. It silently fails otherwise, landing back on
+// whatever session was already active in that browser instead — which is
+// exactly what was happening. Doing the token exchange server-side, once,
+// in the impersonate route avoids needing that allowlist entry at all.)
 
 const headingEl = document.getElementById('ic-heading');
 const introEl = document.getElementById('ic-intro');
@@ -50,53 +54,18 @@ function showError(message) {
   errorEl.style.display = 'block';
 }
 
-function parseHashParams() {
-  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
-  return new URLSearchParams(hash);
-}
-
-async function completeDemoSignIn(token) {
-  // Stash the token first so api()'s auto-attached Authorization header
-  // picks it up for the /api/auth/me call right below.
-  setAuthSession(token, {});
-  const { user } = await api('/api/auth/me');
-  setAuthSession(token, user);
-}
-
-async function completeSupabaseSignIn(accessToken) {
-  const status = await api('/api/status', { auth: false });
-  if (!status.supabaseUrl || !status.supabaseAnonKey) {
-    throw new Error('Sign-in is not fully configured on the server yet — contact the site owner.');
-  }
-  const res = await fetch(`${status.supabaseUrl}/auth/v1/user`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      apikey: status.supabaseAnonKey,
-    },
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.msg || body.error_description || 'This sign-in link is invalid or has expired.');
-  }
-  const supaUser = await res.json();
-  setAuthSession(accessToken, { email: supaUser.email, id: supaUser.id });
-}
-
 (async () => {
-  const searchParams = new URLSearchParams(window.location.search);
-  const demoToken = searchParams.get('mode') === 'demo' ? searchParams.get('token') : null;
-  const hashParams = parseHashParams();
-  const supabaseAccessToken = hashParams.get('access_token');
-
+  const token = new URLSearchParams(window.location.search).get('token');
+  if (!token) {
+    showError();
+    return;
+  }
   try {
-    if (demoToken) {
-      await completeDemoSignIn(demoToken);
-    } else if (supabaseAccessToken) {
-      await completeSupabaseSignIn(supabaseAccessToken);
-    } else {
-      showError();
-      return;
-    }
+    // Stash the token first so api()'s auto-attached Authorization header
+    // picks it up for the /api/auth/me call right below.
+    setAuthSession(token, {});
+    const { user } = await api('/api/auth/me');
+    setAuthSession(token, user);
     window.location.replace('/account/dashboard');
   } catch (err) {
     clearAuthSession();

@@ -173,6 +173,20 @@ async function listCustomers() {
     const { data: profileRows, error: profileError } = await supabaseAdmin.from('profiles').select('id, role, full_name');
     if (profileError) throw profileError;
     const profileById = new Map((profileRows || []).map((p) => [p.id, p]));
+    // One extra query, not one-per-customer: every ledger row for every
+    // listed user, summed client-side into a balance per user_id. Used to
+    // be silently omitted here (the admin Customers tab's "Groove Points"
+    // column always rendered 0 as a result — fixed 2026-09-08).
+    const balanceById = new Map();
+    const userIds = users.map((u) => u.id);
+    if (userIds.length) {
+      const { data: ledgerRows, error: ledgerError } = await supabaseAdmin
+        .from('loyalty_ledger')
+        .select('user_id, points_delta')
+        .in('user_id', userIds);
+      if (ledgerError) throw ledgerError;
+      (ledgerRows || []).forEach((r) => balanceById.set(r.user_id, (balanceById.get(r.user_id) || 0) + r.points_delta));
+    }
     return users
       .map((u) => {
         const profile = profileById.get(u.id);
@@ -183,11 +197,18 @@ async function listCustomers() {
           role: profile?.role || 'customer',
           created_at: u.created_at,
           last_sign_in_at: u.last_sign_in_at || null,
+          loyalty_points: balanceById.get(u.id) || 0,
         };
       })
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   }
-  return mock.listAllUsers().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  return mock
+    .listAllUsers()
+    .map((u) => ({
+      ...u,
+      loyalty_points: mock.loyaltyLedger.filter((l) => l.user_id === u.id).reduce((sum, r) => sum + r.points_delta, 0),
+    }))
+    .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 }
 
 async function listOrders() {
@@ -837,29 +858,80 @@ async function awardReferralBonus(buyerUserId, orderId) {
   });
 }
 
+// Per-friend detail for the account "Refer & Earn" tab: who a customer has
+// referred (name/email/joined date), what they've bought, and how many
+// Groove Points that specific friend has earned the referrer so far. Reuses
+// listCustomers() for name/email rather than a second admin.listUsers()
+// call — profiles has no email column of its own (that lives on
+// auth.users), and listCustomers() already resolves that join.
+async function getReferredFriendsDetail(userId) {
+  if (!userId) return [];
+
+  let referredIds;
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Reading referral details needs SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('profiles').select('id').eq('referred_by', userId);
+    if (error) throw error;
+    referredIds = (data || []).map((r) => r.id);
+  } else {
+    referredIds = [...mock.demoUsers, ...mock.customerUsers].filter((u) => u.referred_by === userId).map((u) => u.id);
+  }
+  if (!referredIds.length) return [];
+
+  let friendOrders;
+  if (isConfigured) {
+    const { data, error } = await supabaseAdmin
+      .from('orders')
+      .select('id, user_id, payment_status, total_paise')
+      .in('user_id', referredIds);
+    if (error) throw error;
+    friendOrders = data || [];
+  } else {
+    friendOrders = mock.orders.filter((o) => referredIds.includes(o.user_id));
+  }
+
+  const referralLedger = (await listLoyaltyLedger(userId)).filter((l) => l.reason === 'referral_bonus');
+  const orderFriendById = new Map(friendOrders.map((o) => [o.id, o.user_id]));
+  const pointsByFriend = new Map();
+  referralLedger.forEach((entry) => {
+    const friendId = orderFriendById.get(entry.order_id);
+    if (!friendId) return;
+    pointsByFriend.set(friendId, (pointsByFriend.get(friendId) || 0) + entry.points_delta);
+  });
+
+  const allCustomers = await listCustomers();
+  const customerById = new Map(allCustomers.map((c) => [c.id, c]));
+
+  return referredIds
+    .map((friendId) => {
+      const c = customerById.get(friendId) || {};
+      const fOrders = friendOrders.filter((o) => o.user_id === friendId);
+      const paidOrders = fOrders.filter((o) => o.payment_status === 'paid');
+      return {
+        id: friendId,
+        full_name: c.full_name || null,
+        email: c.email || null,
+        joined_at: c.created_at || null,
+        orderCount: fOrders.length,
+        paidOrderCount: paidOrders.length,
+        totalSpentPaise: paidOrders.reduce((sum, o) => sum + (o.total_paise || 0), 0),
+        pointsEarnedFromThisFriend: pointsByFriend.get(friendId) || 0,
+      };
+    })
+    .sort((a, b) => new Date(b.joined_at || 0) - new Date(a.joined_at || 0));
+}
+
 // Customer-facing summary for the account "Refer & Earn" tab: their own
-// code/link, how many people they've referred, and points earned from it
-// specifically (a subset of their total Groove Points balance).
+// code/link, how many people they've referred, points earned from it
+// specifically (a subset of their total Groove Points balance), and now
+// (2026-09-08) the actual per-friend breakdown — who they are and what
+// they've bought — rather than just a bare count.
 async function getReferralStats(userId) {
   const code = await getOrCreateReferralCode(userId);
-  let referredCount;
-  let pointsFromReferrals;
-  if (isConfigured) {
-    if (!supabaseAdmin) throw new Error('Reading referral stats needs SUPABASE_SERVICE_ROLE_KEY set.');
-    const [{ count, error: countError }, { data: ledgerRows, error: ledgerError }] = await Promise.all([
-      supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).eq('referred_by', userId),
-      supabaseAdmin.from('loyalty_ledger').select('points_delta').eq('user_id', userId).eq('reason', 'referral_bonus'),
-    ]);
-    if (countError) throw countError;
-    if (ledgerError) throw ledgerError;
-    referredCount = count || 0;
-    pointsFromReferrals = (ledgerRows || []).reduce((sum, r) => sum + r.points_delta, 0);
-  } else {
-    referredCount = mock.countReferredUsers(userId);
-    const ledger = await listLoyaltyLedger(userId);
-    pointsFromReferrals = ledger.filter((l) => l.reason === 'referral_bonus').reduce((sum, r) => sum + r.points_delta, 0);
-  }
-  return { code, referredCount, pointsFromReferrals };
+  const referrals = await getReferredFriendsDetail(userId);
+  const referredCount = referrals.length;
+  const pointsFromReferrals = referrals.reduce((sum, r) => sum + r.pointsEarnedFromThisFriend, 0);
+  return { code, referredCount, pointsFromReferrals, referrals };
 }
 
 async function addNewsletterSubscriber(email) {
@@ -1389,4 +1461,5 @@ module.exports = {
   hasExistingOrders,
   awardReferralBonus,
   getReferralStats,
+  getReferredFriendsDetail,
 };

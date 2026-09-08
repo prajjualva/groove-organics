@@ -91,13 +91,17 @@ router.delete('/wishlist/:productId', async (req, res, next) => {
 // this feature (see dataStore.getOrCreateReferralCode).
 router.get('/referral', async (req, res, next) => {
   try {
-    const { code, referredCount, pointsFromReferrals } = await store.getReferralStats(req.user.userId);
+    const { code, referredCount, pointsFromReferrals, referrals } = await store.getReferralStats(req.user.userId);
     const origin = process.env.FRONTEND_ORIGIN || `${req.protocol}://${req.get('host')}`;
     res.json({
       code,
       link: `${origin}/account?ref=${encodeURIComponent(code)}`,
       referredCount,
       pointsFromReferrals,
+      // Per-friend breakdown — name/email, when they joined, how many
+      // orders they've placed/paid, what they've spent, and how many
+      // Groove Points that specific friend has earned this customer.
+      referrals,
     });
   } catch (err) {
     next(err);

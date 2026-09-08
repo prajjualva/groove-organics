@@ -185,9 +185,9 @@ async function renderReferralTab() {
   const wrap = document.getElementById('account-tab-content');
   wrap.innerHTML = '<p>Loading your referral link…</p>';
   try {
-    const { link, referredCount, pointsFromReferrals } = await api('/api/customer/referral');
+    const { link, referredCount, pointsFromReferrals, referrals } = await api('/api/customer/referral');
     wrap.innerHTML = `
-      <div class="card" style="max-width:560px;">
+      <div class="card" style="max-width:720px;">
         <h3 class="mt-0">Refer & Earn</h3>
         <p style="color:var(--moss-700);">Share your link — when a friend signs up and orders, you earn Groove Points on every order they place.</p>
         <div class="form-field">
@@ -201,6 +201,31 @@ async function renderReferralTab() {
           <div><p style="font-size:1.6rem;font-weight:700;margin:0;" class="mono">${referredCount}</p><p style="color:var(--moss-700);margin:0;font-size:0.85rem;">Friends referred</p></div>
           <div><p style="font-size:1.6rem;font-weight:700;margin:0;" class="mono">${pointsFromReferrals}</p><p style="color:var(--moss-700);margin:0;font-size:0.85rem;">Points earned from referrals</p></div>
         </div>
+      </div>
+
+      <div class="card" style="max-width:720px;margin-top:16px;overflow-x:auto;">
+        <h4 class="mt-0">Your friends</h4>
+        ${
+          referrals && referrals.length
+            ? `<table class="data-table">
+                <thead><tr><th>Name</th><th>Joined</th><th>Orders</th><th>Spent</th><th>Points earned</th></tr></thead>
+                <tbody>
+                  ${referrals
+                    .map(
+                      (r) => `
+                    <tr>
+                      <td>${r.full_name || r.email || 'A friend'}</td>
+                      <td>${r.joined_at ? new Date(r.joined_at).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
+                      <td>${r.paidOrderCount}${r.orderCount !== r.paidOrderCount ? ` (${r.orderCount} placed)` : ''}</td>
+                      <td class="mono">${formatRupees(r.totalSpentPaise)}</td>
+                      <td class="mono">${r.pointsEarnedFromThisFriend}</td>
+                    </tr>`
+                    )
+                    .join('')}
+                </tbody>
+              </table>`
+            : '<p style="color:var(--moss-700);">No one has signed up with your link yet — once a friend does, they\'ll show up here along with what they\'ve bought.</p>'
+        }
       </div>
     `;
     document.getElementById('referral-copy-btn').addEventListener('click', async () => {

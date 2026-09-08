@@ -891,7 +891,15 @@ async function renderBannersTab() {
     });
   });
 
-  document.getElementById('add-banner-btn').addEventListener('click', async () => {
+  document.getElementById('add-banner-btn').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    // Guard against double-submission: this button used to have no
+    // disabled/in-flight state at all, so clicking it more than once while
+    // the (often multi-MB) image was still being read/uploaded — easy to
+    // do, since nothing on screen changed until the request finished —
+    // created one banner per click. Every other async button in this file
+    // already disables itself first; this one just hadn't. Fixed 2026-09-08.
+    if (btn.disabled) return;
     const errorEl = document.getElementById('add-banner-error');
     errorEl.style.display = 'none';
     const file = document.getElementById('b-file').files[0];
@@ -901,6 +909,9 @@ async function renderBannersTab() {
       errorEl.style.display = 'block';
       return;
     }
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'Adding…';
     try {
       const image_url = await readFileAsDataUrl(file);
       const image_url_mobile = mobileFile ? await readFileAsDataUrl(mobileFile) : null;
@@ -922,6 +933,8 @@ async function renderBannersTab() {
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = originalLabel;
     }
   });
 }

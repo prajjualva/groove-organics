@@ -699,6 +699,15 @@ table.data-table th { font-family: var(--font-mono); text-transform: uppercase; 
 
 .page-header { padding: 140px 0 48px; background: var(--moss-900); color: var(--cream); }
 .page-header p { opacity: 0.75; max-width: 560px; }
+/* h1/h2/h3/h4 have a global color: var(--moss-900) rule (near the top of
+   this file) that — because it targets the element directly rather than
+   relying on inheritance — overrides .page-header's cream color on every
+   heading inside one. That made every .page-header <h1> on the site
+   (About/Cart/Checkout/Contact/Deals/Shop/Account/Admin/Staff dashboards)
+   render dark-green text on a dark-green background: invisible unless you
+   select the text. Fixed 2026-09-08 by restating cream here, scoped to
+   headings inside .page-header specifically. */
+.page-header h1, .page-header h2, .page-header h3, .page-header h4 { color: var(--cream); }
 
 .breadcrumb { font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.6; margin-bottom: 12px; }
 
