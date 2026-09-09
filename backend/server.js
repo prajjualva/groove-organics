@@ -21,6 +21,7 @@ const variantRoutes = require('./routes/variants');
 const couponRoutes = require('./routes/coupons');
 const shippingRoutes = require('./routes/shipping');
 const loyaltyRoutes = require('./routes/loyalty');
+const reportsRoutes = require('./routes/reports');
 const { isConfigured: supabaseConfigured, supabaseUrl, supabaseAnonKey } = require('./lib/supabase');
 const { isConfigured: razorpayConfigured } = require('./lib/razorpay');
 
@@ -57,6 +58,7 @@ app.use('/api', variantRoutes); // /api/products/:productId/variants, /api/varia
 app.use('/api/coupons', couponRoutes);
 app.use('/api/shipping', shippingRoutes);
 app.use('/api/loyalty', loyaltyRoutes);
+app.use('/api/reports', reportsRoutes);
 
 // --- SEO: sitemap.xml + robots.txt, generated from the current catalog ---
 app.get('/sitemap.xml', async (req, res, next) => {
@@ -64,7 +66,7 @@ app.get('/sitemap.xml', async (req, res, next) => {
     const store = require('./lib/dataStore');
     const products = await store.listProducts({ includeInactive: false });
     const origin = `${req.protocol}://${req.get('host')}`;
-    const staticPaths = ['/', '/shop', '/deals', '/about', '/contact', '/terms', '/privacy', '/refund-policy', '/shipping-policy'];
+    const staticPaths = ['/', '/shop', '/deals', '/about', '/contact', '/faq', '/terms', '/privacy', '/refund-policy', '/shipping-policy'];
     const urls = [
       ...staticPaths.map((p) => `${origin}${p}`),
       ...products.map((p) => `${origin}/product?slug=${encodeURIComponent(p.slug)}`),
@@ -152,6 +154,7 @@ const pageRoutes = {
   '/about': 'about.html',
   '/contact': 'contact.html',
   '/deals': 'deals.html',
+  '/faq': 'faq.html',
   '/terms': 'legal.html',
   '/privacy': 'legal.html',
   '/refund-policy': 'legal.html',

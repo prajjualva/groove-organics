@@ -12,7 +12,7 @@
 
 <div id="nav-root"></div>
 
-<section class="section" style="padding-top:160px;">
+<section class="section" style="padding-top:160px;" id="main-content" tabindex="-1">
   <div class="container" id="confirmation-content" style="max-width:640px;">
     <p>Loading your order…</p>
   </div>
@@ -32,7 +32,7 @@ async function loadConfirmation() {
     return;
   }
 
-  let order = { order_number: orderId, status: 'placed', payment_status: 'pending', payment_gateway: null };
+  let order = { order_number: orderId, status: 'placed', payment_status: 'pending', payment_gateway: null, items: [] };
   try {
     const res = await api(`/api/orders/${encodeURIComponent(orderId)}/summary`, { auth: false });
     order = res.order;
@@ -48,6 +48,46 @@ async function loadConfirmation() {
     ? `<a class="btn btn--outline" style="margin-top:24px;margin-left:12px;" href="${order.tracking_url}" target="_blank" rel="noopener">Track Package${order.courier_name ? ` (${order.courier_name})` : ''}</a>`
     : '';
 
+  const items = order.items || [];
+  // Itemized receipt shown directly on the page — previously what was
+  // actually bought/paid only ever appeared inside the separate PDF
+  // invoice, never on the confirmation page itself.
+  const itemsHtml = items.length
+    ? `
+      <div class="card confirm-items" style="margin-top:16px;">
+        <h3 class="mt-0">What you ordered</h3>
+        ${items
+          .map(
+            (i) => `<div class="flex-between"><span>${i.product_name}${i.variant_label ? ` (${i.variant_label})` : ''} × ${i.quantity}</span><span class="mono">${formatRupees(i.line_total_paise)}</span></div>`
+          )
+          .join('')}
+        <hr style="border:none;border-top:1px solid var(--sand-300);margin:12px 0;" />
+        ${order.subtotal_paise != null ? `<div class="flex-between" style="font-size:0.88rem;"><span>Subtotal (before GST)</span><span class="mono">${formatRupees(order.subtotal_paise)}</span></div>` : ''}
+        ${
+          order.cgst_paise || order.sgst_paise
+            ? `<div class="flex-between" style="font-size:0.88rem;"><span>CGST (incl.)</span><span class="mono">${formatRupees(order.cgst_paise || 0)}</span></div>
+               <div class="flex-between" style="font-size:0.88rem;"><span>SGST (incl.)</span><span class="mono">${formatRupees(order.sgst_paise || 0)}</span></div>`
+            : order.igst_paise
+            ? `<div class="flex-between" style="font-size:0.88rem;"><span>IGST (incl.)</span><span class="mono">${formatRupees(order.igst_paise)}</span></div>`
+            : order.gst_paise != null
+            ? `<div class="flex-between" style="font-size:0.88rem;"><span>GST (incl.)</span><span class="mono">${formatRupees(order.gst_paise)}</span></div>`
+            : ''
+        }
+        ${order.shipping_paise != null ? `<div class="flex-between" style="font-size:0.88rem;"><span>Shipping</span><span class="mono">${order.shipping_paise > 0 ? formatRupees(order.shipping_paise) : 'Free'}</span></div>` : ''}
+        ${(() => {
+          const couponPart = order.coupon_code
+            ? Math.max(0, (order.discount_paise || 0) - (order.loyalty_discount_paise || 0) - (order.referral_discount_paise || 0))
+            : 0;
+          return couponPart
+            ? `<div class="flex-between" style="font-size:0.88rem;"><span>Coupon discount (${order.coupon_code})</span><span class="mono">−${formatRupees(couponPart)}</span></div>`
+            : '';
+        })()}
+        ${order.loyalty_discount_paise ? `<div class="flex-between" style="font-size:0.88rem;"><span>Groove Points redeemed</span><span class="mono">−${formatRupees(order.loyalty_discount_paise)}</span></div>` : ''}
+        ${order.referral_discount_paise ? `<div class="flex-between" style="font-size:0.88rem;"><span>Referral discount</span><span class="mono">−${formatRupees(order.referral_discount_paise)}</span></div>` : ''}
+        <div class="flex-between" style="font-weight:700;margin-top:6px;"><span>Total</span><span class="mono">${formatRupees(order.total_paise)}</span></div>
+      </div>`
+    : '';
+
   wrap.innerHTML = `
     <span class="eyebrow">Thank you</span>
     <h1>Your order is placed.</h1>
@@ -57,15 +97,15 @@ async function loadConfirmation() {
       <div class="flex-between"><span>Status</span><span class="status-pill status-${order.status}">${order.status}</span></div>
       <div class="flex-between"><span>Payment</span><span class="status-pill status-${order.payment_status === 'paid' ? 'delivered' : 'placed'}">${order.payment_status}</span></div>
     </div>
+    ${itemsHtml}
     ${codNote}
-    <a class="btn btn--primary" style="margin-top:24px;" href="/api/orders/${encodeURIComponent(orderId)}/invoice" target="_blank" rel="noopener">Download Invoice (PDF)</a>
+    <button class="btn btn--primary" style="margin-top:24px;" onclick="openInvoicePdf('${encodeURIComponent(orderId)}')">Download Invoice (PDF)</button>
     ${trackingNote}
     <a class="btn btn--outline" style="margin-top:24px;margin-left:12px;" href="/shop">Continue Shopping</a>
   `;
 }
 document.addEventListener('DOMContentLoaded', () => {
-  renderNav('');
-  renderFooter();
+  renderSiteChrome('');
   loadConfirmation();
 });
 </script>

@@ -12,34 +12,31 @@
 
 <div id="nav-root"></div>
 
-<header class="page-header">
+<header class="page-header" id="main-content" tabindex="-1">
   <div class="container">
     <span class="breadcrumb">Our Story</span>
     <h1>Rooted in soil, grown by hand.</h1>
-    <p>A slower way to care — premium, ethically-crafted botanicals in small batches, from farms we know by name.</p>
+    <p>A slower way to care — small-batch botanicals, made without shortcuts.</p>
   </div>
 </header>
 
-<section class="section">
-  <div class="container" style="display:grid;grid-template-columns:repeat(3,1fr);gap:32px;text-align:center;">
-    <div class="card"><h2 class="mono" style="font-family:var(--font-mono);">12</h2><p>Partner farms</p></div>
-    <div class="card"><h2 class="mono" style="font-family:var(--font-mono);">48</h2><p>Small-batch formulas</p></div>
-    <div class="card"><h2 class="mono" style="font-family:var(--font-mono);">100%</h2><p>Recyclable packaging</p></div>
-  </div>
-</section>
-
-<section class="section section--dark">
+<!--
+  This section's eyebrow/title/body/milestones are admin-editable — see
+  Admin -> Homepage Content -> "Our Story section" (site_content key
+  homepage_story). It previously showed hardcoded, unverified specifics
+  (a partner-farm count, a named certification, specific years) that
+  weren't confirmed facts about the business — removed 2026-09-09 per the
+  store owner. Milestones now start empty and the timeline block below is
+  simply omitted until real ones are added from Admin; nothing here is
+  invented as a placeholder.
+-->
+<section class="section section--dark" id="story-section">
   <div class="container story">
     <div class="story__text reveal">
-      <span class="eyebrow">Our Journey</span>
-      <h2>A slower way to care.</h2>
-      <p>We partner with named farmers, craft in small batches, and package in earth-friendly glass — prioritizing meaningful self-care rituals over chasing sales volume.</p>
-      <div class="story__milestones">
-        <div class="story__milestone"><span class="mono">2018</span><span>Founder started blending botanical oils in a farmhouse kitchen.</span></div>
-        <div class="story__milestone"><span class="mono">2020</span><span>Established a countryside studio with three artisans.</span></div>
-        <div class="story__milestone"><span class="mono">2022</span><span>Achieved organic and cruelty-free certification for core formulas.</span></div>
-        <div class="story__milestone"><span class="mono">2024</span><span>Launched a returnable-glass refill initiative with 40 retail partners.</span></div>
-      </div>
+      <span class="eyebrow" id="story-eyebrow">Our Story</span>
+      <h2 id="story-title">Rooted in soil, made the slower way.</h2>
+      <p id="story-body">We believe good oil should not be rushed — pressed in small batches, filtered gently, and packaged to be reused rather than thrown away.</p>
+      <div class="story__milestones" id="story-milestones" style="display:none;"></div>
     </div>
     <div class="story__ring-wrap reveal">
       <svg class="story__ring" viewBox="0 0 200 200" fill="none">
@@ -54,7 +51,7 @@
 <section class="section center">
   <div class="container" style="max-width:640px;">
     <h2>Nature's purity. Crafted for everyday wellness.</h2>
-    <p style="color:var(--moss-700);">Sustainable, cruelty-free botanical care — made to fit into daily rituals, not just shelves.</p>
+    <p style="color:var(--moss-700);">Botanical care made to fit into daily rituals, not just shelves.</p>
     <a href="/shop" class="btn btn--primary">Shop Our Oils</a>
   </div>
 </section>
@@ -65,7 +62,43 @@
 <script src="/js/cart.js"></script>
 <script src="/js/partials.js"></script>
 <script>
-document.addEventListener('DOMContentLoaded', () => { renderNav('about'); renderFooter(); });
+function aboutEscapeHtml(str) {
+  return String(str || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function loadStorySection() {
+  try {
+    const { content } = await api('/api/content', { auth: false });
+    const story = content.homepage_story;
+    if (!story) return; // keep the static fallback copy already in the markup
+    if (story.eyebrow) document.getElementById('story-eyebrow').textContent = story.eyebrow;
+    const title = [story.title_line1, story.title_line2].filter(Boolean).join(' ');
+    if (title) document.getElementById('story-title').textContent = title;
+    if (story.body) document.getElementById('story-body').textContent = story.body;
+
+    const milestones = Array.isArray(story.milestones) ? story.milestones.filter((m) => m && (m.year || m.text)) : [];
+    const milestonesEl = document.getElementById('story-milestones');
+    // Note: .story__milestones has its own `display: flex` rule in
+    // style.css, which (being an author rule) outranks the plain `hidden`
+    // attribute's browser-default `display: none` — so this sets
+    // style.display explicitly rather than toggling the `hidden` attribute.
+    if (milestones.length) {
+      milestonesEl.innerHTML = milestones
+        .map((m) => `<div class="story__milestone">${m.year ? `<span class="mono">${aboutEscapeHtml(m.year)}</span>` : ''}<span>${aboutEscapeHtml(m.text)}</span></div>`)
+        .join('');
+      milestonesEl.style.display = 'flex';
+    } else {
+      milestonesEl.style.display = 'none';
+    }
+  } catch {
+    // CMS unreachable — the static fallback copy already in the markup stays as-is.
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  renderSiteChrome('about');
+  loadStorySection();
+});
 </script>
 </body>
 </html>

@@ -9,6 +9,18 @@
   const canvas = document.getElementById('hero-canvas');
   if (!canvas) return;
 
+  // The render loop below used to run forever, even after home-content.js
+  // hides this canvas (display:none) once real banner photos load — an
+  // always-on, invisible WebGL render loop on every normal page view.
+  // window.__grooveStopHero3D lets home-content.js (or anything else) stop
+  // it once the canvas is no longer shown; `stopped` is checked at the top
+  // of every animate() frame so the in-flight rAF callback exits cleanly
+  // instead of scheduling another one.
+  let stopped = false;
+  window.__grooveStopHero3D = () => {
+    stopped = true;
+  };
+
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (prefersReducedMotion || typeof THREE === 'undefined') {
     canvas.style.display = 'none';
@@ -100,6 +112,7 @@
 
   const clock = new THREE.Clock();
   function animate() {
+    if (stopped) return;
     requestAnimationFrame(animate);
     const t = clock.getElapsedTime();
 

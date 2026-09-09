@@ -75,64 +75,71 @@ function cartSubtotalPaise() {
   return getCart().reduce((sum, i) => sum + i.unit_price_paise * i.quantity, 0);
 }
 
-// Pre-checkout estimate — mirrors the backend's GST-inclusive pricing +
-// weight-based shipping + coupon math (see dataStore.js's priceOrderItems /
-// createOrder) so what the shopper sees on the cart/checkout page is close
-// to what they're actually charged. The backend always recalculates the
-// authoritative numbers itself when the order is created — this is only
-// ever a preview. `defaultGstRatePercent` comes from GET /api/status for
-// any item that doesn't carry its own rate. `couponCode` and
-// `paymentMethod` ('cod' | 'online') are optional.
-async function cartEstimate(defaultGstRatePercent = 5, { couponCode = null, paymentMethod = 'online' } = {}) {
+// Pre-checkout estimate. Does NOT compute GST/shipping/coupon/points math
+// itself — that math lives in exactly one place, server-side
+// (backend/lib/dataStore.js's computeOrderPricing), and this just calls it
+// via POST /api/orders/estimate so what the shopper sees on the cart/
+// checkout page is guaranteed to match what placing the order actually
+// charges (same function store.createOrder uses). `defaultGstRatePercent`
+// is accepted for backward compatibility with existing callers but is no
+// longer used here — the server already knows its own default rate.
+// `shippingAddress` ({ state, pincode, ... }) is optional — pass it once
+// known (checkout has it, the cart page usually doesn't yet) so shipping-
+// zone rules and the CGST/SGST-vs-IGST split are already accurate before
+// the order is placed; without it the server assumes intrastate, matching
+// what a single-state store would charge anyway.
+async function cartEstimate(
+  defaultGstRatePercent = 5,
+  { couponCode = null, paymentMethod = 'online', redeemPoints = 0, shippingAddress = null } = {}
+) {
   const items = getCart();
-  let inclusiveGoods = 0; // sum of what the customer pays for products, GST included
-  let base = 0; // GST-inclusive price with tax extracted out
-  let gst = 0;
-  let manualShipping = 0;
-  let pooledGrams = 0;
-  items.forEach((i) => {
-    const lineInclusive = i.unit_price_paise * i.quantity;
-    const rate = i.gst_rate_percent != null ? i.gst_rate_percent : defaultGstRatePercent;
-    const lineBase = Math.round((lineInclusive * 100) / (100 + rate));
-    inclusiveGoods += lineInclusive;
-    base += lineBase;
-    gst += lineInclusive - lineBase;
-    if (i.shipping_charge_paise) {
-      manualShipping += i.shipping_charge_paise * i.quantity;
-    } else if (i.weight_grams) {
-      pooledGrams += i.weight_grams * i.quantity;
-    }
-  });
-
-  let settings = {};
-  let weightShipping = 0;
-  let discount = 0;
-  let couponError = null;
-  try {
-    const [settingsRes, shippingRes, couponRes] = await Promise.all([
-      api('/api/content', { auth: false }).then((r) => r.content.store_settings || {}),
-      pooledGrams > 0
-        ? api('/api/shipping/estimate', { method: 'POST', auth: false, body: { totalGrams: pooledGrams } }).then((r) => r.pricePaise || 0)
-        : Promise.resolve(0),
-      couponCode
-        ? api('/api/coupons/validate', { method: 'POST', auth: false, body: { code: couponCode, goodsPaise: inclusiveGoods } })
-        : Promise.resolve(null),
-    ]);
-    settings = settingsRes;
-    weightShipping = shippingRes;
-    if (couponRes) {
-      if (couponRes.valid) discount = couponRes.discountPaise;
-      else couponError = couponRes.reason;
-    }
-  } catch {
-    // Estimate-only — if any of these calls fail, fall back to zero for that part.
+  if (!items.length) {
+    return { subtotal: 0, gst: 0, cgst: 0, sgst: 0, igst: 0, shipping: 0, discount: 0, couponError: null, loyaltyDiscountPaise: 0, loyaltyPointsApplied: 0, total: 0, isIntrastate: true };
   }
 
-  let shipping = manualShipping + weightShipping;
-  if (paymentMethod === 'cod') shipping += Number(settings.cod_extra_charge_paise) || 0;
-  const threshold = settings.free_shipping_threshold_paise;
-  if (threshold != null && threshold > 0 && inclusiveGoods - discount >= threshold) shipping = 0;
-
-  const total = base + gst + shipping - discount;
-  return { subtotal: base, gst, shipping, discount, couponError, total };
+  try {
+    const pricing = await api('/api/orders/estimate', {
+      method: 'POST',
+      body: {
+        items: items.map((i) => ({
+          product_id: i.product_id,
+          variant_id: i.variant_id || null,
+          unit_price_paise: i.unit_price_paise,
+          quantity: i.quantity,
+        })),
+        customer: { address: shippingAddress || undefined, paymentMethod },
+        couponCode,
+        redeemPoints,
+      },
+    });
+    return {
+      subtotal: pricing.subtotalPaise,
+      gst: pricing.gstPaise,
+      cgst: pricing.cgstPaise,
+      sgst: pricing.sgstPaise,
+      igst: pricing.igstPaise,
+      shipping: pricing.shippingPaise,
+      // `discount` is the coupon-only portion (kept separate from
+      // loyaltyDiscountPaise/referralDiscountPaise below, which existing
+      // callers already render as their own line items) — the TOTAL
+      // discount actually subtracted from `total` below is always
+      // discount + loyaltyDiscountPaise + referralDiscountPaise, computed
+      // once, server-side, inside pricing.totalPaise.
+      discount: pricing.couponDiscountPaise,
+      couponError: pricing.couponError,
+      loyaltyDiscountPaise: pricing.loyaltyDiscountPaise,
+      loyaltyPointsApplied: pricing.loyaltyPointsApplied,
+      referralDiscountPaise: pricing.referralDiscountPaise,
+      isIntrastate: pricing.isIntrastate,
+      total: pricing.totalPaise,
+    };
+  } catch {
+    // Estimate-only endpoint unreachable — fall back to a rough client-side
+    // number (GST-inclusive prices, tax simply not broken out, no shipping/
+    // coupon/points) so the page still shows *something* rather than
+    // breaking entirely. The real order creation still always recalculates
+    // authoritatively server-side regardless of what happens here.
+    const subtotal = items.reduce((sum, i) => sum + i.unit_price_paise * i.quantity, 0);
+    return { subtotal, gst: 0, cgst: 0, sgst: 0, igst: 0, shipping: 0, discount: 0, couponError: null, loyaltyDiscountPaise: 0, loyaltyPointsApplied: 0, total: subtotal, isIntrastate: true };
+  }
 }

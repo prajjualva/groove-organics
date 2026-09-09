@@ -33,7 +33,6 @@ async function renderLegalPage() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  renderNav('');
-  renderFooter();
+  renderSiteChrome('');
   renderLegalPage();
 });

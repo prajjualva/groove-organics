@@ -11,10 +11,15 @@ const LOGO_SVG = `<img src="/assets/logo.png" alt="Groove Organics" class="brand
 function renderNav(active = '') {
   const root = document.getElementById('nav-root');
   if (!root) return;
+  // "Deals" was previously a primary nav item alongside Shop/Our Story —
+  // per the customer-website audit (§4b), that reads as discount-store
+  // energy in prime nav real estate for a "premium simplicity" brand. It
+  // still gets a real, easy-to-find link (a small pill in the icon
+  // cluster, styled distinctly from the icon buttons) rather than being
+  // removed outright.
   const links = [
     ['/', 'Home', ''],
     ['/shop', 'Shop', 'shop'],
-    ['/deals', 'Deals', 'deals'],
     ['/about', 'Our Story', 'about'],
     ['/contact', 'Contact', 'contact'],
   ];
@@ -24,7 +29,7 @@ function renderNav(active = '') {
         ([href, label, key]) =>
           `<a href="${href}"${key === active ? ' aria-current="page"' : ''}>${label}</a>`
       )
-      .join('');
+      .join('') + (mobile ? `<a href="/deals"${active === 'deals' ? ' aria-current="page"' : ''}>Deals</a>` : '');
 
   root.innerHTML = `
     <nav class="nav" id="site-nav">
@@ -35,6 +40,10 @@ function renderNav(active = '') {
         </a>
         <ul class="nav__links">${linkHtml(false)}</ul>
         <div class="nav__icons">
+          <a href="/deals" class="nav__deals-pill"${active === 'deals' ? ' aria-current="page"' : ''}>Deals</a>
+          <button class="nav__icon-btn" id="nav-search-btn" aria-label="Search products" aria-haspopup="dialog">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          </button>
           <a href="/wishlist" class="nav__icon-btn" aria-label="Wishlist">
             <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
           </a>
@@ -69,7 +78,85 @@ function renderNav(active = '') {
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
 
+  document.getElementById('nav-search-btn').addEventListener('click', openSearchPanel);
+
   updateCartBadge();
+}
+
+// --- Site search: a lightweight overlay panel, backed by the same public
+// /api/products list the Shop page already uses — no new backend endpoint,
+// a plain case-insensitive substring match on name/short_description. The
+// catalog is small today (per the audit, real search infra is lower
+// priority until it grows), so this is intentionally simple rather than a
+// server-side search endpoint. ---
+let SEARCH_PRODUCTS_CACHE = null;
+
+function ensureSearchPanel() {
+  if (document.getElementById('site-search-panel')) return;
+  const panel = document.createElement('div');
+  panel.id = 'site-search-panel';
+  panel.className = 'search-panel';
+  panel.innerHTML = `
+    <div class="search-panel__box" role="dialog" aria-modal="true" aria-label="Search products">
+      <button type="button" class="search-panel__close" id="search-panel-close" aria-label="Close search">×</button>
+      <label class="visually-hidden" for="search-panel-input">Search products</label>
+      <input id="search-panel-input" type="search" placeholder="Search oils…" autocomplete="off" />
+      <div class="search-panel__results" id="search-panel-results"></div>
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  panel.addEventListener('click', (e) => {
+    if (e.target === panel) closeSearchPanel();
+  });
+  document.getElementById('search-panel-close').addEventListener('click', closeSearchPanel);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && panel.classList.contains('open')) closeSearchPanel();
+  });
+
+  document.getElementById('search-panel-input').addEventListener('input', async (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    const resultsEl = document.getElementById('search-panel-results');
+    if (!q) {
+      resultsEl.innerHTML = '';
+      return;
+    }
+    if (!SEARCH_PRODUCTS_CACHE) {
+      try {
+        const { products } = await api('/api/products', { auth: false });
+        SEARCH_PRODUCTS_CACHE = products;
+      } catch {
+        SEARCH_PRODUCTS_CACHE = [];
+      }
+    }
+    const matches = SEARCH_PRODUCTS_CACHE.filter(
+      (p) => p.name.toLowerCase().includes(q) || (p.short_description || '').toLowerCase().includes(q)
+    ).slice(0, 8);
+    resultsEl.innerHTML = matches.length
+      ? matches
+          .map(
+            (p) => `
+        <a class="search-result" href="/product?slug=${encodeURIComponent(p.slug)}">
+          ${p.image_url ? `<img src="${p.image_url}" alt="" />` : '<span class="search-result-noimg" aria-hidden="true"></span>'}
+          <span>${p.name}</span>
+        </a>`
+          )
+          .join('')
+      : `<p class="search-panel__empty">No products match “${q}”.</p>`;
+  });
+}
+
+function openSearchPanel() {
+  ensureSearchPanel();
+  const panel = document.getElementById('site-search-panel');
+  panel.classList.add('open');
+  document.getElementById('search-panel-input').value = '';
+  document.getElementById('search-panel-results').innerHTML = '';
+  setTimeout(() => document.getElementById('search-panel-input').focus(), 0);
+}
+
+function closeSearchPanel() {
+  document.getElementById('site-search-panel')?.classList.remove('open');
 }
 
 function renderFooter() {
@@ -96,6 +183,7 @@ function renderFooter() {
             <ul>
               <li><a href="/about">Our Story</a></li>
               <li><a href="/contact">Contact</a></li>
+              <li><a href="/faq">FAQ</a></li>
               <li><a href="/terms">Terms</a></li>
               <li><a href="/privacy">Privacy</a></li>
               <li><a href="/refund-policy">Refunds</a></li>
@@ -110,7 +198,7 @@ function renderFooter() {
               <input id="newsletter-email" type="email" placeholder="you@email.com" required />
               <button class="btn btn--primary btn--sm" type="submit">Join</button>
             </form>
-            <p class="form-success" id="newsletter-success" style="display:none;margin-top:10px;">Thanks — check your inbox for your code.</p>
+            <p class="form-success" id="newsletter-success" style="display:none;margin-top:10px;" aria-live="polite">Thanks — check your inbox for your code.</p>
           </div>
         </div>
         <div class="footer__bottom">
@@ -128,11 +216,52 @@ function renderFooter() {
     try {
       await api('/api/newsletter', { method: 'POST', body: { email } });
       form.style.display = 'none';
-      document.getElementById('newsletter-success').style.display = 'block';
+      // Re-set textContent (not just style.display) so aria-live actually
+      // announces this to screen readers, not just a display toggle on
+      // otherwise-unchanged text.
+      const successEl = document.getElementById('newsletter-success');
+      successEl.textContent = 'Thanks — check your inbox for your code.';
+      successEl.style.display = 'block';
     } catch (err) {
       alert(err.message || 'Something went wrong — please try again.');
     }
   });
+}
+
+// Injects a "Skip to content" link once per page load, for keyboard/screen-
+// reader users to jump past the nav. Pairs with id="main-content" on each
+// page's first real content landmark.
+function ensureSkipLink() {
+  if (document.querySelector('.skip-link')) return;
+  const link = document.createElement('a');
+  link.className = 'skip-link';
+  link.href = '#main-content';
+  link.textContent = 'Skip to content';
+  document.body.insertBefore(link, document.body.firstChild);
+}
+
+// Renders the shared nav + footer defensively: a failure in one never blocks
+// the other, or the page's own subsequent data-loading code. Before this,
+// an uncaught error inside renderNav/renderFooter (or an unrelated boot
+// error) could leave a page stuck on its initial "Loading…" state forever,
+// since nothing after that line in the page's DOMContentLoaded handler
+// would ever run. Call this instead of renderNav()+renderFooter() directly.
+function renderSiteChrome(active = '') {
+  try {
+    ensureSkipLink();
+  } catch (err) {
+    console.error('Skip link failed to render', err);
+  }
+  try {
+    renderNav(active);
+  } catch (err) {
+    console.error('Nav failed to render', err);
+  }
+  try {
+    renderFooter();
+  } catch (err) {
+    console.error('Footer failed to render', err);
+  }
 }
 
 function updateCartBadge() {

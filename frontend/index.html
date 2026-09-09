@@ -13,7 +13,7 @@
 
 <div id="nav-root"></div>
 
-<header class="hero">
+<header class="hero" id="main-content" tabindex="-1">
   <div id="hero-slider" class="hero__slider" aria-hidden="true">
     <!-- slides injected by home-content.js from /api/banners?placement=homepage_hero -->
   </div>
@@ -167,9 +167,11 @@
 </section>
 
 <!--
-  "The Journey of the Oil" — a real cinematic video loop (the Three.js
-  version in process3d.js is left in the codebase but no longer used here;
-  its section IDs aren't in this markup so that script just no-ops).
+  "The Journey of the Oil" — a real cinematic video loop. An earlier
+  Three.js scroll-driven version of this section (process3d.js) was fully
+  removed (script tag + ~60 lines of matching CSS) since it had been
+  confirmed dead — its target section IDs weren't in this markup, so the
+  whole 39KB file was doing nothing but shipping to every homepage visitor.
   process-video.js lazy-loads/plays the video once this section is near
   the viewport, keeps it muted/looping, and never forces motion on visitors
   who've set prefers-reduced-motion — the <video poster> is itself a full
@@ -226,13 +228,13 @@
 </section>
 
 <section class="section section--tight">
-  <div class="container card reveal" style="display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;">
-    <div>
-      <h3 class="mt-0">Get 10% off your first order</h3>
-      <p style="margin:0;color:var(--moss-700);">Join our newsletter for new-oil launches and small-batch drops.</p>
-    </div>
-    <form class="stack" style="flex-direction:row;gap:8px;flex-wrap:wrap;" id="home-newsletter-form">
-      <input type="email" required placeholder="you@email.com" style="flex:1 1 200px;min-width:0;padding:12px 14px;border-radius:999px;border:1px solid var(--sand-300);" />
+  <div class="container newsletter reveal">
+    <span class="eyebrow">Stay in the loop</span>
+    <h3 class="mt-0">Get 10% off your first order</h3>
+    <p style="margin:0;color:var(--moss-700);">Join our newsletter for new-oil launches and small-batch drops.</p>
+    <form id="home-newsletter-form" aria-live="polite">
+      <label class="visually-hidden" for="home-newsletter-email">Email address</label>
+      <input id="home-newsletter-email" type="email" required placeholder="you@email.com" />
       <button class="btn btn--primary" type="submit">Join</button>
     </form>
   </div>
@@ -246,7 +248,6 @@
 <script src="/js/partials.js"></script>
 <script src="/js/products-render.js"></script>
 <script src="/js/hero3d.js" defer></script>
-<script src="/js/process3d.js" defer></script>
 <script src="/js/process-video.js" defer></script>
 <script src="/js/philosophy.js" defer></script>
 <script src="/js/home-content.js"></script>

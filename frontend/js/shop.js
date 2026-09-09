@@ -19,6 +19,26 @@ function applySortAndFilter() {
   else if (sort === 'rating') list.sort((a, b) => (b.rating || 0) - (a.rating || 0));
   else list.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 
+  const countEl = document.getElementById('filter-results-count');
+  if (countEl) countEl.textContent = `${list.length} product${list.length === 1 ? '' : 's'}`;
+
+  const activeChipsEl = document.getElementById('filter-active-chips');
+  if (activeChipsEl) {
+    if (ACTIVE_CATEGORY_ID === 'all') {
+      activeChipsEl.innerHTML = '';
+    } else {
+      const cat = ALL_CATEGORIES.find((c) => c.id === ACTIVE_CATEGORY_ID);
+      activeChipsEl.innerHTML = cat
+        ? `<span class="filter-tag">${cat.name}<button type="button" id="clear-filter-btn" aria-label="Clear filter">×</button></span>`
+        : '';
+      document.getElementById('clear-filter-btn')?.addEventListener('click', () => {
+        ACTIVE_CATEGORY_ID = 'all';
+        renderCategoryFilters();
+        applySortAndFilter();
+      });
+    }
+  }
+
   const grid = document.getElementById('shop-products');
   if (!list.length) {
     grid.innerHTML = '<div class="empty-state">No products in this category yet.</div>';
@@ -33,9 +53,9 @@ function renderCategoryFilters() {
   const parents = ALL_CATEGORIES.filter((c) => !c.parent_id);
 
   function buttonsHtml() {
-    let html = `<button class="${ACTIVE_CATEGORY_ID === 'all' ? 'active' : ''}" data-filter="all">All</button>`;
+    let html = `<button class="filter-chip ${ACTIVE_CATEGORY_ID === 'all' ? 'active' : ''}" data-filter="all">All</button>`;
     parents.forEach((parent) => {
-      html += `<button class="${ACTIVE_CATEGORY_ID === parent.id ? 'active' : ''}" data-filter="${parent.id}">${parent.name}</button>`;
+      html += `<button class="filter-chip ${ACTIVE_CATEGORY_ID === parent.id ? 'active' : ''}" data-filter="${parent.id}">${parent.name}</button>`;
     });
     return html;
   }
@@ -46,9 +66,9 @@ function renderCategoryFilters() {
     const subs = ALL_CATEGORIES.filter((c) => c.parent_id === activeParent.id);
     if (!subs.length) return '';
     return `
-      <div class="dashboard-nav" style="margin-top:10px;" id="subcategory-filters">
-        <button class="active" data-subfilter="${activeParent.id}">All ${activeParent.name}</button>
-        ${subs.map((s) => `<button data-subfilter="${s.id}">${s.name}</button>`).join('')}
+      <div class="filter-bar__chips" style="margin-top:10px;" id="subcategory-filters">
+        <button class="filter-chip active" data-subfilter="${activeParent.id}">All ${activeParent.name}</button>
+        ${subs.map((s) => `<button class="filter-chip" data-subfilter="${s.id}">${s.name}</button>`).join('')}
       </div>`;
   }
 
@@ -96,8 +116,7 @@ async function loadShopProducts() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  renderNav('shop');
-  renderFooter();
+  renderSiteChrome('shop');
   loadShopProducts();
   document.getElementById('sort-select').addEventListener('change', applySortAndFilter);
 });

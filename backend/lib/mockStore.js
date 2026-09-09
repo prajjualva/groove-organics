@@ -5,6 +5,18 @@
 
 const crypto = require('crypto');
 
+// Demo-mode id generator. Plain `Date.now()` (the pattern used throughout
+// this file and dataStore.js's mock branches) collides whenever two records
+// are created within the same millisecond — a real bug, not theoretical:
+// it silently duplicate-IDs two different customer accounts if they sign up
+// back-to-back (findUserById then resolves to whichever was created first,
+// e.g. reading the wrong profile/orders), or two orders created in quick
+// succession. A trailing random suffix makes that collision astronomically
+// unlikely without changing the id "shape" anything depends on.
+function uid(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 // Category tree: top-level categories, with subcategories nested under "Oils"
 // (mirrors db/schema.sql seed data). id order: oils, spices, honey-pantry,
 // body-care, wellness, then the three oil subcategories.
@@ -50,6 +62,20 @@ const products = [
     hsn_code: '15131900',
     seo_title: null,
     seo_meta_description: null,
+    gallery_images: [],
+    key_benefits: [
+      'Traditionally wood-pressed (chekku/ghani method)',
+      'Unrefined and unfiltered — natural aroma and nutrients retained',
+      'No heat or chemical processing',
+    ],
+    ingredients_info: '100% Cold-Pressed Coconut Oil. No additives.',
+    shipping_info: null,
+    faq: [],
+    sku: 'GRV-CCO-BASE',
+    barcode: null,
+    low_stock_threshold: null,
+    reserved_stock: 0,
+    shipping_class_id: null,
   },
   {
     id: 'p2',
@@ -81,6 +107,20 @@ const products = [
     hsn_code: '15131900',
     seo_title: null,
     seo_meta_description: null,
+    gallery_images: [],
+    key_benefits: [
+      'Cold-extracted from fresh coconut milk',
+      'No heat or chemicals used',
+      'Lighter, cleaner taste — for cooking and skin/hair care',
+    ],
+    ingredients_info: '100% Virgin Coconut Oil (cold-extracted from fresh coconut milk).',
+    shipping_info: null,
+    faq: [],
+    sku: 'GRV-VCO-BASE',
+    barcode: null,
+    low_stock_threshold: null,
+    reserved_stock: 0,
+    shipping_class_id: null,
   },
   {
     id: 'p3',
@@ -112,6 +152,11 @@ const products = [
     hsn_code: null,
     seo_title: null,
     seo_meta_description: null,
+    sku: null,
+    barcode: null,
+    low_stock_threshold: null,
+    reserved_stock: 0,
+    shipping_class_id: null,
   },
 ];
 
@@ -213,9 +258,9 @@ const reviews = [];
 // 200ml/500ml/1L lineup — each has its own price/stock/weight so shipping
 // and totals are accurate per size.
 const productVariants = [
-  { id: 'var-1', product_id: 'p1', size: '200ml', color: null, price_paise: 21500, stock: 80, sku: 'GRV-CCO-200', image_url: null, weight_grams: 250, sort_order: 1 },
-  { id: 'var-2', product_id: 'p1', size: '500ml', color: null, price_paise: 42500, stock: 100, sku: 'GRV-CCO-500', image_url: null, weight_grams: 550, sort_order: 2 },
-  { id: 'var-3', product_id: 'p1', size: '1L', color: null, price_paise: 76500, stock: 40, sku: 'GRV-CCO-1L', image_url: null, weight_grams: 1050, sort_order: 3 },
+  { id: 'var-1', product_id: 'p1', size: '200ml', color: null, price_paise: 21500, stock: 80, sku: 'GRV-CCO-200', barcode: null, image_url: null, weight_grams: 250, sort_order: 1 },
+  { id: 'var-2', product_id: 'p1', size: '500ml', color: null, price_paise: 42500, stock: 100, sku: 'GRV-CCO-500', barcode: null, image_url: null, weight_grams: 550, sort_order: 2 },
+  { id: 'var-3', product_id: 'p1', size: '1L', color: null, price_paise: 76500, stock: 40, sku: 'GRV-CCO-1L', barcode: null, image_url: null, weight_grams: 1050, sort_order: 3 },
 ];
 const siteContent = new Map(); // key -> value object; populated with defaults in dataStore
 
@@ -229,6 +274,30 @@ const shippingRateSlabs = [
   { id: 'ship-3', max_weight_grams: 2000, price_paise: 9000, sort_order: 3 },
   { id: 'ship-4', max_weight_grams: null, price_paise: 12000, sort_order: 4 },
 ];
+
+// Named shipping classes (Admin Phase 2) — empty by default; an admin
+// creates these from Admin -> Shipping Rates and assigns products to one
+// instead of retyping the same flat shipping override on each product.
+const shippingClasses = [];
+
+// Stock-adjustment ledger (Admin Phase 2) — see db/schema.sql's
+// stock_adjustments table comment and dataStore.js's recordStockAdjustment.
+const stockAdjustments = [];
+
+// Order timeline + refund/return/cancellation workflow (Admin Phase 4) —
+// see db/schema.sql's order_status_events/order_refunds table comments
+// and dataStore.js's logOrderEvent/requestOrderRefund.
+const orderStatusEvents = [];
+const orderRefunds = [];
+
+// Per-customer coupon redemption log (Admin Phase 5) — see db/schema.sql's
+// coupon_redemptions table comment and dataStore.js's
+// countCouponRedemptionsForUser/redeemCoupon.
+const couponRedemptions = [];
+
+// Cross-domain admin action audit log (Admin Phase 6) — see db/schema.sql's
+// audit_log table comment and dataStore.js's logAudit/listAuditLog.
+const auditLog = [];
 
 // Demo coupon so the checkout flow has something to test with out of the box —
 // code matches the "20% off your first order" promo card seeded above.
@@ -255,8 +324,8 @@ const loyaltyLedger = [];
 // Demo-only login accounts — clearly not for production use.
 // Once Supabase is connected, real accounts replace these entirely.
 const demoUsers = [
-  { id: 'admin-demo', email: 'admin@demo.groove', password: 'demo1234', role: 'admin', full_name: 'Demo Admin' },
-  { id: 'staff-demo', email: 'staff@demo.groove', password: 'demo1234', role: 'staff', full_name: 'Demo Staff' },
+  { id: 'admin-demo', email: 'admin@demo.groove', password: 'demo1234', role: 'admin', full_name: 'Demo Admin', is_active: true, deactivated_at: null, deactivated_reason: null },
+  { id: 'staff-demo', email: 'staff@demo.groove', password: 'demo1234', role: 'staff', full_name: 'Demo Staff', is_active: true, deactivated_at: null, deactivated_reason: null },
 ];
 
 // Self-registered demo customer accounts (in-memory only — see registerCustomer below).
@@ -284,7 +353,24 @@ function findUserByReferralCode(code) {
 function getProfile(userId) {
   const user = findUserById(userId);
   if (!user) return null;
-  return { id: user.id, referral_code: user.referral_code || null, referred_by: user.referred_by || null };
+  return {
+    id: user.id,
+    referral_code: user.referral_code || null,
+    referred_by: user.referred_by || null,
+    is_active: user.is_active !== false,
+  };
+}
+
+// Admin Phase 3: deactivate/reactivate an account. Checked on every request
+// by resolveUser (backend/middleware/auth.js), so this takes effect
+// immediately for demo mode — no need to also revoke the in-memory session.
+function setUserActive(id, isActive, reason) {
+  const user = findUserById(id);
+  if (!user) return false;
+  user.is_active = isActive;
+  user.deactivated_at = isActive ? null : new Date().toISOString();
+  user.deactivated_reason = isActive ? null : reason || null;
+  return true;
 }
 
 function setReferralCode(userId, code) {
@@ -302,7 +388,7 @@ function registerCustomer({ email, password, full_name, referralCode }) {
   if (findUserByEmail(email)) return null; // already exists
   const referrer = referralCode ? findUserByReferralCode(referralCode) : null;
   const user = {
-    id: `cust_${Date.now()}`,
+    id: uid('cust'),
     email,
     password,
     role: 'customer',
@@ -310,6 +396,9 @@ function registerCustomer({ email, password, full_name, referralCode }) {
     created_at: new Date().toISOString(),
     referral_code: Math.random().toString(36).slice(2, 10).toUpperCase(),
     referred_by: referrer ? referrer.id : null,
+    is_active: true,
+    deactivated_at: null,
+    deactivated_reason: null,
   };
   customerUsers.push(user);
   return user;
@@ -325,6 +414,13 @@ function listAllUsers() {
     full_name: u.full_name,
     role: u.role,
     created_at: u.created_at || null,
+    is_active: u.is_active !== false,
+    deactivated_at: u.deactivated_at || null,
+    deactivated_reason: u.deactivated_reason || null,
+    // Admin Phase 6: the referral report needs to know who was referred —
+    // previously this was omitted here (listCustomers spreads this object
+    // as-is), even though registerCustomer already records it.
+    referred_by: u.referred_by || null,
   }));
 }
 
@@ -384,6 +480,7 @@ function nextOrderNumber() {
 }
 
 module.exports = {
+  uid,
   categories,
   products,
   PROMO_TAG_OPTIONS,
@@ -397,6 +494,12 @@ module.exports = {
   productVariants,
   siteContent,
   shippingRateSlabs,
+  shippingClasses,
+  stockAdjustments,
+  orderStatusEvents,
+  orderRefunds,
+  couponRedemptions,
+  auditLog,
   coupons,
   loyaltyLedger,
   demoUsers,
@@ -409,6 +512,7 @@ module.exports = {
   setReferralCode,
   countReferredUsers,
   listAllUsers,
+  setUserActive,
   setUserPassword,
   createPasswordResetToken,
   consumePasswordResetToken,

@@ -1,3 +1,24 @@
+function removeCartStickyCta() {
+  document.getElementById('cart-sticky-cta')?.remove();
+  document.body.classList.remove('has-sticky-cta');
+}
+
+function mountCartStickyCta(totalPaise) {
+  let bar = document.getElementById('cart-sticky-cta');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'sticky-cta';
+    bar.id = 'cart-sticky-cta';
+    bar.innerHTML = `
+      <span class="sticky-cta__price" id="cart-sticky-total"></span>
+      <a href="/checkout" class="btn btn--primary">Checkout</a>
+    `;
+    document.body.appendChild(bar);
+    document.body.classList.add('has-sticky-cta');
+  }
+  document.getElementById('cart-sticky-total').textContent = formatRupees(totalPaise);
+}
+
 async function renderCartPage() {
   const items = getCart();
   const itemsWrap = document.getElementById('cart-items');
@@ -6,6 +27,7 @@ async function renderCartPage() {
   if (!items.length) {
     itemsWrap.innerHTML = `<div class="empty-state">Your cart is empty. <a href="/shop" style="text-decoration:underline;">Browse the shop</a>.</div>`;
     summaryWrap.innerHTML = '';
+    removeCartStickyCta();
     return;
   }
 
@@ -18,7 +40,7 @@ async function renderCartPage() {
           <span class="mono" style="font-size:0.85rem;color:var(--moss-700);">${formatRupees(item.unit_price_paise)} each</span>
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
-          <input type="number" min="1" value="${item.quantity}" data-qty="${item.product_id}" data-qty-variant="${item.variant_id || ''}" style="width:64px;padding:8px;border-radius:8px;border:1px solid var(--sand-300);" />
+          <input type="number" min="1" value="${item.quantity}" data-qty="${item.product_id}" data-qty-variant="${item.variant_id || ''}" style="width:64px;min-height:44px;padding:8px;border-radius:8px;border:1px solid var(--sand-300);" />
           <span class="mono" style="min-width:90px;text-align:right;">${formatRupees(item.unit_price_paise * item.quantity)}</span>
           <button class="btn btn--outline btn--sm" data-remove="${item.product_id}" data-remove-variant="${item.variant_id || ''}">Remove</button>
         </div>
@@ -46,6 +68,7 @@ async function renderCartPage() {
     <div class="flex-between" style="font-weight:700;font-size:1.1rem;"><span>Estimated Total</span><span class="mono">${formatRupees(total)}</span></div>
     <a href="/checkout" class="btn btn--primary" style="width:100%;margin-top:20px;">Proceed to Checkout</a>
   `;
+  mountCartStickyCta(total);
 
   itemsWrap.querySelectorAll('[data-qty]').forEach((input) => {
     input.addEventListener('change', () => {
@@ -63,7 +86,6 @@ async function renderCartPage() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  renderNav('');
-  renderFooter();
+  renderSiteChrome('');
   renderCartPage();
 });

@@ -13,9 +13,13 @@ async function resolveUser(token) {
     const client = supabaseAdmin || supabase;
     const { data: profile } = await client
       .from('profiles')
-      .select('role, full_name')
+      .select('role, full_name, is_active')
       .eq('id', data.user.id)
       .maybeSingle();
+    // Deactivated (Admin -> Customers -> Security -> Deactivate account):
+    // checked on every request, not just at sign-in, so it takes effect
+    // immediately even for a token issued before the deactivation.
+    if (profile && profile.is_active === false) return null;
     return {
       userId: data.user.id,
       email: data.user.email,
@@ -24,7 +28,11 @@ async function resolveUser(token) {
     };
   }
 
-  return mock.getSession(token);
+  const session = mock.getSession(token);
+  if (!session) return null;
+  const liveUser = mock.findUserById(session.userId);
+  if (liveUser && liveUser.is_active === false) return null;
+  return session;
 }
 
 function getBearerToken(req) {

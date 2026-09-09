@@ -12,7 +12,7 @@
 
 <div id="nav-root"></div>
 
-<header class="page-header">
+<header class="page-header" id="main-content" tabindex="-1">
   <div class="container">
     <span class="breadcrumb">Contact</span>
     <h1>We'd love to hear from you.</h1>
@@ -29,8 +29,8 @@
         <div class="form-field"><label for="c-subject">Subject</label><input id="c-subject" /></div>
         <div class="form-field"><label for="c-message">Message</label><textarea id="c-message" rows="5" required></textarea></div>
         <button class="btn btn--primary" type="submit">Send Message</button>
-        <p class="form-success" id="contact-success" style="display:none;margin-top:14px;">Thanks — we'll be in touch within one working day.</p>
-        <p class="form-error" id="contact-error" style="display:none;"></p>
+        <p class="form-success" id="contact-success" style="display:none;margin-top:14px;" aria-live="polite">Thanks — we'll be in touch within one working day.</p>
+        <p class="form-error" id="contact-error" style="display:none;" aria-live="assertive"></p>
       </form>
     </div>
     <div class="card stack">
@@ -49,13 +49,13 @@
 <script src="/js/partials.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-  renderNav('contact');
-  renderFooter();
+  renderSiteChrome('contact');
   document.getElementById('contact-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const errorEl = document.getElementById('contact-error');
     const successEl = document.getElementById('contact-success');
     errorEl.style.display = 'none';
+    errorEl.textContent = '';
     try {
       await api('/api/contact', {
         method: 'POST',
@@ -68,6 +68,10 @@ document.addEventListener('DOMContentLoaded', () => {
         },
       });
       document.getElementById('contact-form').reset();
+      // Re-set textContent (not just style.display) so aria-live actually
+      // announces this — a display-only toggle on unchanged text isn't a
+      // reliable announcement trigger for screen readers.
+      successEl.textContent = "Thanks — we'll be in touch within one working day.";
       successEl.style.display = 'block';
     } catch (err) {
       errorEl.textContent = err.message;

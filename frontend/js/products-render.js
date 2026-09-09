@@ -50,7 +50,7 @@ function productCardHtml(product) {
   return `
     <div class="product-card">
       ${badge}
-      <button class="product-card__wishlist" data-wishlist="${product.id}" aria-label="Save to wishlist" style="position:absolute;top:16px;right:16px;z-index:2;background:rgba(251,246,236,0.9);border:none;border-radius:999px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+      <button class="product-card__wishlist" data-wishlist="${product.id}" aria-label="Save to wishlist" style="position:absolute;top:10px;right:10px;z-index:2;background:rgba(251,246,236,0.9);border:none;border-radius:999px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#33422B" stroke-width="1.8"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
       </button>
       <a href="/product?slug=${encodeURIComponent(product.slug)}" style="text-decoration:none;color:inherit;">

@@ -15,8 +15,7 @@ async function loadHomeProducts() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  renderNav('');
-  renderFooter();
+  renderSiteChrome('');
   loadHomeProducts();
 
   const homeNewsletter = document.getElementById('home-newsletter-form');

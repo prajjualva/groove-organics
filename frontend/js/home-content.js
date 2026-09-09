@@ -41,8 +41,12 @@ async function loadHeroSlider() {
   if (!banners.length) return;
 
   // Real photo slides take over the hero background — hide the abstract
-  // 3D scene so the two don't fight each other.
-  if (canvas) canvas.style.display = 'none';
+  // 3D scene so the two don't fight each other, and stop its render loop
+  // (it used to keep running invisibly forever otherwise — see hero3d.js).
+  if (canvas) {
+    canvas.style.display = 'none';
+    if (typeof window.__grooveStopHero3D === 'function') window.__grooveStopHero3D();
+  }
 
   // Each banner can optionally carry a separate image_url_mobile (set from
   // Admin → Banners) for a crop that isn't just the desktop photo squeezed
@@ -215,22 +219,6 @@ async function loadHomepageContent() {
       // scroll-reveal scan (see partials.js) — re-arm it so they actually
       // fade in instead of staying invisible forever.
       if (typeof initScrollReveal === 'function') initScrollReveal();
-    }
-
-    // The scroll-driven 3D "Journey of the Oil" experience (process3d.js)
-    // shows its own copy of this same step text as an HTML overlay on top
-    // of the canvas — same admin-edited content, single source of truth,
-    // just rendered twice for the two presentations (3D vs. static fallback).
-    if (Array.isArray(process.steps)) {
-      const stageBlocks = document.querySelectorAll('#process3d-copy .process3d__stage');
-      stageBlocks.forEach((block, i) => {
-        const s = process.steps[i];
-        if (!s) return;
-        const titleEl = block.querySelector('[data-step-title]');
-        const bodyEl = block.querySelector('[data-step-body]');
-        if (titleEl) titleEl.textContent = s.title || '';
-        if (bodyEl) bodyEl.textContent = s.body || '';
-      });
     }
   }
 }

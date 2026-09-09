@@ -70,6 +70,12 @@ router.post('/login', async (req, res) => {
       error: 'Invalid credentials. Demo admin/staff logins: admin@demo.groove or staff@demo.groove, password demo1234 — or register a customer account.',
     });
   }
+  if (user.is_active === false) {
+    // Checked here too (not just resolveUser) so a deactivated account gets
+    // a clear reason immediately instead of appearing to log in and then
+    // silently failing every subsequent request.
+    return res.status(403).json({ error: 'This account has been deactivated. Contact support if you believe this is a mistake.' });
+  }
   const token = mock.createSession(user);
   res.json({
     token,

@@ -14,14 +14,23 @@ function toPublicProduct(row) {
 }
 
 // --- Categories (parent -> subcategory tree) ---
-async function listCategories() {
+// includeInactive: the storefront's own nav/filter list should only ever
+// show is_active categories (Admin Phase 5's new toggle); the admin
+// Categories tab passes includeInactive: true so a deactivated category is
+// still visible there to be re-activated. Mirrors listProducts's own
+// includeInactive option/pattern exactly.
+async function listCategories({ includeInactive = false } = {}) {
   if (isConfigured) {
     const client = supabaseAdmin || supabase;
-    const { data, error } = await client.from('categories').select('*').order('sort_order', { ascending: true });
+    let query = client.from('categories').select('*').order('sort_order', { ascending: true });
+    if (!includeInactive) query = query.eq('is_active', true);
+    const { data, error } = await query;
     if (error) throw error;
     return data;
   }
-  return [...mock.categories].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  return [...mock.categories]
+    .filter((c) => includeInactive || c.is_active !== false)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 }
 
 async function createCategory(input) {
@@ -31,7 +40,17 @@ async function createCategory(input) {
     if (error) throw error;
     return data;
   }
-  const category = { id: `cat_${Date.now()}`, parent_id: null, sort_order: mock.categories.length + 1, ...input };
+  const category = {
+    id: mock.uid('cat'),
+    parent_id: null,
+    sort_order: mock.categories.length + 1,
+    description: null,
+    image_url: null,
+    is_active: true,
+    seo_title: null,
+    seo_meta_description: null,
+    ...input,
+  };
   mock.categories.push(category);
   return category;
 }
@@ -107,7 +126,7 @@ async function createProduct(input) {
     return data;
   }
   const product = {
-    id: `p${mock.products.length + 1}_${Date.now()}`,
+    id: mock.uid('p'),
     is_active: true,
     is_bestseller: false,
     is_new: false,
@@ -128,6 +147,16 @@ async function createProduct(input) {
     hsn_code: null,
     seo_title: null,
     seo_meta_description: null,
+    gallery_images: [],
+    key_benefits: [],
+    ingredients_info: null,
+    shipping_info: null,
+    faq: [],
+    sku: null,
+    barcode: null,
+    low_stock_threshold: null,
+    reserved_stock: 0,
+    shipping_class_id: null,
     ...input,
   };
   mock.products.push(product);
@@ -170,7 +199,9 @@ async function listCustomers() {
     const { data: userPage, error: userError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
     if (userError) throw userError;
     const users = userPage?.users || [];
-    const { data: profileRows, error: profileError } = await supabaseAdmin.from('profiles').select('id, role, full_name');
+    const { data: profileRows, error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, role, full_name, is_active, deactivated_at, deactivated_reason, referred_by');
     if (profileError) throw profileError;
     const profileById = new Map((profileRows || []).map((p) => [p.id, p]));
     // One extra query, not one-per-customer: every ledger row for every
@@ -198,6 +229,10 @@ async function listCustomers() {
           created_at: u.created_at,
           last_sign_in_at: u.last_sign_in_at || null,
           loyalty_points: balanceById.get(u.id) || 0,
+          is_active: profile?.is_active !== false,
+          deactivated_at: profile?.deactivated_at || null,
+          deactivated_reason: profile?.deactivated_reason || null,
+          referred_by: profile?.referred_by || null,
         };
       })
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -209,6 +244,33 @@ async function listCustomers() {
       loyalty_points: mock.loyaltyLedger.filter((l) => l.user_id === u.id).reduce((sum, r) => sum + r.points_delta, 0),
     }))
     .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+}
+
+// Admin Phase 3: deactivate/reactivate a customer (or staff) account. See
+// db/schema.sql's profiles.is_active comment and middleware/auth.js's
+// resolveUser — this is checked on every request, so it takes effect
+// immediately, not just on the account's next sign-in.
+async function setCustomerActive(id, { isActive, reason = null } = {}) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .update({
+        is_active: isActive,
+        deactivated_at: isActive ? null : new Date().toISOString(),
+        deactivated_reason: isActive ? null : reason || null,
+      })
+      .eq('id', id);
+    if (profileError) throw profileError;
+    // Belt-and-suspenders beyond the per-request is_active check above:
+    // also ban/unban the underlying Supabase Auth user, so a deactivated
+    // account can't sign in again or refresh its session either. Best-effort
+    // — a profile-only deactivation (the check every request already makes)
+    // still fully blocks access even if this call fails for some reason.
+    await supabaseAdmin.auth.admin.updateUserById(id, { ban_duration: isActive ? 'none' : '876000h' }).catch(() => {});
+    return true;
+  }
+  return mock.setUserActive(id, isActive, reason);
 }
 
 async function listOrders() {
@@ -246,20 +308,41 @@ async function getOrder(id) {
 // has GST baked in, the same way a price tag in an Indian shop works. GST is
 // therefore EXTRACTED from that price for the invoice breakup, never added on
 // top: base = inclusive * 100 / (100 + rate), gst = inclusive - base.
-async function priceOrderItems(items, defaultGstRatePercent) {
+// chargeGst=false means this store isn't GST-registered (Admin → Store
+// Settings → "Charge GST", previously a dead toggle — its save handler
+// hardcoded true regardless of what the admin picked, and nothing here
+// ever read it, so it silently had no effect either way). When off, every
+// line is priced at 0% GST — the customer still pays the same
+// GST-inclusive price entered in Admin, but nothing is extracted/shown as
+// tax on the invoice, matching what turning this off is supposed to mean.
+async function priceOrderItems(items, defaultGstRatePercent, chargeGst = true, isIntrastate = true) {
   return Promise.all(
     items.map(async (i) => {
       const product = i.product_id ? await getProductById(i.product_id).catch(() => null) : null;
-      const gstRate = product && product.gst_rate_percent != null ? Number(product.gst_rate_percent) : Number(defaultGstRatePercent);
-      const shippingPerUnit = product && product.shipping_charge_paise ? Number(product.shipping_charge_paise) : 0;
+      const gstRate = !chargeGst ? 0 : product && product.gst_rate_percent != null ? Number(product.gst_rate_percent) : Number(defaultGstRatePercent);
+      const shippingOverride = await resolveProductShippingOverridePaise(product);
+      const shippingPerUnit = shippingOverride != null ? shippingOverride : 0;
       const lineInclusive = i.unit_price_paise * i.quantity; // what the customer actually pays for this line, tax included
       const lineBase = Math.round((lineInclusive * 100) / (100 + gstRate)); // pre-tax value, extracted
       const lineGst = lineInclusive - lineBase; // the GST embedded in lineInclusive
+      // CGST/SGST vs IGST (Indian GST law): an intrastate sale (seller and
+      // customer/shipping address in the same state) splits the tax evenly
+      // into CGST + SGST; an interstate sale charges the full rate as IGST
+      // instead. cgst = floor(lineGst/2), sgst = the remainder, so
+      // cgst+sgst always exactly equals lineGst — no rounding drift.
+      const lineCgst = isIntrastate ? Math.floor(lineGst / 2) : 0;
+      const lineSgst = isIntrastate ? lineGst - lineCgst : 0;
+      const lineIgst = isIntrastate ? 0 : lineGst;
       return {
         ...i,
+        hsn_code: (product && product.hsn_code) || null,
+        category_id: (product && product.category_id) || null,
         gst_rate_percent: gstRate,
         line_base_paise: lineBase,
         line_gst_paise: lineGst,
+        line_cgst_paise: lineCgst,
+        line_sgst_paise: lineSgst,
+        line_igst_paise: lineIgst,
         line_shipping_paise: shippingPerUnit * i.quantity,
         line_total_paise: lineInclusive, // GST-inclusive — this is the line amount actually charged
       };
@@ -267,27 +350,144 @@ async function priceOrderItems(items, defaultGstRatePercent) {
   );
 }
 
-async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0, userId = null, couponCode = null, redeemPoints = 0 }) {
-  const pricedItems = await priceOrderItems(items, gstRatePercent);
+// Chargeable weight for one line = max(actual weight, volumetric weight),
+// volumetric = L x W x H (cm) / 5000, giving grams. Falls back to 0 (ships
+// free) if a product has no weight/dimensions set at all. Shared by the
+// order-pricing engine below and the /api/orders/estimate preview route so
+// both always compute shipping weight identically.
+function chargeableWeightGrams(product, variant) {
+  const weight = (variant && variant.weight_grams != null ? variant.weight_grams : null) ?? product.weight_grams ?? 0;
+  const l = product.length_cm || 0;
+  const w = product.width_cm || 0;
+  const h = product.height_cm || 0;
+  const volumetric = (l * w * h) / 5000;
+  return Math.max(Number(weight) || 0, volumetric);
+}
+
+// A product's manual per-unit shipping override, in paise, or null if none
+// applies (in which case it falls through to weight-based computeShipping
+// instead, via pooledChargeableGrams below). The product's own
+// shipping_charge_paise always wins if set and non-zero; otherwise its
+// shipping_class's flat_rate_paise (if any, and the class is active) is
+// used — lets an admin manage one shared rate for a group of products
+// ("Fragile - Glass", "Bulky", ...) instead of retyping the same number on
+// every product individually.
+async function resolveProductShippingOverridePaise(product) {
+  if (!product) return null;
+  if (product.shipping_charge_paise) return Number(product.shipping_charge_paise);
+  if (product.shipping_class_id) {
+    const shippingClass = await getShippingClassById(product.shipping_class_id).catch(() => null);
+    if (shippingClass && shippingClass.is_active !== false && shippingClass.flat_rate_paise != null) {
+      return Number(shippingClass.flat_rate_paise);
+    }
+  }
+  return null;
+}
+
+// Pools the chargeable weight of every line item that does NOT have a
+// manual per-product shipping override (those are priced individually
+// inside priceOrderItems instead) — the pooled figure is what gets matched
+// against the shipping rate-slab table for one whole-shipment cost.
+async function pooledChargeableGrams(items) {
+  let pooledGrams = 0;
+  for (const item of items) {
+    if (!item.product_id) continue;
+    const product = await getProductById(item.product_id).catch(() => null);
+    if (!product) continue;
+    const shippingOverride = await resolveProductShippingOverridePaise(product);
+    if (shippingOverride != null) continue;
+    let variant = null;
+    if (item.variant_id) {
+      const variants = await listVariants(item.product_id).catch(() => []);
+      variant = variants.find((v) => v.id === item.variant_id) || null;
+    }
+    pooledGrams += chargeableWeightGrams(product, variant) * (Number(item.quantity) || 1);
+  }
+  return pooledGrams;
+}
+
+// =========================================================================
+// THE order-pricing engine. Computes the full, authoritative subtotal /
+// CGST / SGST / IGST / shipping / coupon / Groove Points / referral / total
+// breakdown for a cart, entirely server-side. This is the ONE place this
+// math happens — createOrder (actually placing an order) and the public
+// POST /api/orders/estimate route (the live cart/checkout preview) both
+// call this exact function, so the number a shopper sees before paying is
+// guaranteed to be the number they're actually charged. Never duplicate
+// this arithmetic in the frontend, or anywhere else server-side.
+//
+// Nothing in here writes to the database or has a side effect — coupon
+// validation and Groove Points redemption are both read-only previews
+// (validateCoupon / previewLoyaltyRedemption). Actually redeeming a coupon
+// or writing a loyalty-ledger row only happens in createOrder, and only
+// after the real order has been successfully inserted.
+// =========================================================================
+async function computeOrderPricing({
+  items,
+  shippingAddress = null,
+  paymentMethod = 'online',
+  userId = null,
+  couponCode = null,
+  redeemPoints = 0,
+  gstRatePercent = null,
+}) {
+  const settings = await getStoreSettings();
+  const defaultGstRatePercent = gstRatePercent != null ? gstRatePercent : Number(process.env.GST_RATE_PERCENT || 5);
+  const chargeGst = settings.charge_gst !== false;
+
+  // CGST/SGST vs IGST: compares the store's own registered state (Admin ->
+  // Store Settings -> "Seller / business state") against the customer's
+  // shipping-address state. If either is blank/unknown this defaults to
+  // intrastate (CGST+SGST split) — that's how a single-state business
+  // actually operates, and keeps the breakup sane before an admin has
+  // filled in the seller state.
+  const sellerState = (settings.seller_state || '').trim();
+  const customerState = ((shippingAddress && shippingAddress.state) || '').trim();
+  const isIntrastate = !sellerState || !customerState || sellerState.toLowerCase() === customerState.toLowerCase();
+
+  const pricedItems = await priceOrderItems(items, defaultGstRatePercent, chargeGst, isIntrastate);
+
   // subtotalPaise is the pre-tax (base) total; gstPaise is the tax extracted from the
   // inclusive prices above — subtotalPaise + gstPaise always equals the sum of what the
   // customer actually pays for the products (the GST-inclusive line totals).
   const subtotalPaise = pricedItems.reduce((sum, i) => sum + i.line_base_paise, 0);
-  const gstPaise = pricedItems.reduce((sum, i) => sum + i.line_gst_paise, 0);
+  const cgstPaise = pricedItems.reduce((sum, i) => sum + i.line_cgst_paise, 0);
+  const sgstPaise = pricedItems.reduce((sum, i) => sum + i.line_sgst_paise, 0);
+  const igstPaise = pricedItems.reduce((sum, i) => sum + i.line_igst_paise, 0);
+  const gstPaise = cgstPaise + sgstPaise + igstPaise;
   const productShippingPaise = pricedItems.reduce((sum, i) => sum + i.line_shipping_paise, 0);
-  let totalShippingPaise = shippingPaise + productShippingPaise;
+  const preDiscountGoodsPaise = subtotalPaise + gstPaise; // sum of inclusive line totals
+
+  // Weight/zone/state/pincode-based shipping for every line that doesn't
+  // carry its own manual shipping_charge_paise override (those are already
+  // priced per-unit above, inside priceOrderItems).
+  const pooledGrams = await pooledChargeableGrams(items);
+  const weightShippingPaise =
+    pooledGrams > 0
+      ? await computeShipping({
+          totalGrams: pooledGrams,
+          orderValuePaise: preDiscountGoodsPaise,
+          state: customerState,
+          pincode: (shippingAddress && shippingAddress.pincode) || '',
+        })
+      : 0;
+  let totalShippingPaise = weightShippingPaise + productShippingPaise;
+  if (paymentMethod === 'cod') totalShippingPaise += Number(settings.cod_extra_charge_paise) || 0;
 
   // Coupon: simple order-level discount subtracted from the final total (computed on the
   // full GST-inclusive price first, discount applied after) — never prorated per line.
   let discountPaise = 0;
-  let appliedCoupon = null;
-  const preDiscountGoodsPaise = subtotalPaise + gstPaise; // sum of inclusive line totals
-  const settings = await getStoreSettings();
+  let couponDiscountPaise = 0;
+  let couponApplied = null;
+  let couponError = null;
   if (couponCode) {
-    const validation = await validateCoupon(couponCode, preDiscountGoodsPaise);
+    const validation = await validateCoupon(couponCode, preDiscountGoodsPaise, { pricedItems, userId });
     if (validation.valid) {
-      appliedCoupon = validation.coupon;
-      discountPaise = validation.discountPaise;
+      couponApplied = validation.coupon;
+      couponDiscountPaise = validation.discountPaise;
+      discountPaise += couponDiscountPaise;
+    } else {
+      couponError = validation.reason;
     }
   }
 
@@ -302,9 +502,9 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
 
   // Refer-a-friend signup discount: automatic, no coupon code needed —
   // applies once, on a referred customer's very first order only (checked
-  // via hasExistingOrders, BEFORE this order is inserted below). Stacks on
-  // top of whatever's left after the coupon + points redemption above, same
-  // pattern as loyalty redemption.
+  // via hasExistingOrders — read-only here, BEFORE any real order exists).
+  // Stacks on top of whatever's left after the coupon + points redemption
+  // above, same pattern as loyalty redemption.
   let referralDiscountPaise = 0;
   if (userId && settings.referral_program_enabled) {
     const profile = await getProfile(userId);
@@ -316,13 +516,66 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
     }
   }
 
-  // Free-shipping threshold applies AFTER the coupon discount.
+  // Free-shipping threshold applies AFTER every discount above.
   const freeShippingThreshold = settings.free_shipping_threshold_paise;
-  if (freeShippingThreshold != null && preDiscountGoodsPaise - discountPaise >= freeShippingThreshold) {
+  if (freeShippingThreshold != null && freeShippingThreshold > 0 && preDiscountGoodsPaise - discountPaise >= freeShippingThreshold) {
     totalShippingPaise = 0;
   }
 
   const totalPaise = subtotalPaise + gstPaise + totalShippingPaise - discountPaise;
+
+  return {
+    pricedItems,
+    chargeGst,
+    isIntrastate,
+    sellerState,
+    customerState,
+    subtotalPaise,
+    cgstPaise,
+    sgstPaise,
+    igstPaise,
+    gstPaise,
+    shippingPaise: totalShippingPaise,
+    discountPaise,
+    couponDiscountPaise,
+    couponApplied,
+    couponError,
+    loyaltyDiscountPaise: loyaltyRedemption.discountPaise,
+    loyaltyPointsApplied: loyaltyRedemption.points,
+    referralDiscountPaise,
+    totalPaise,
+  };
+}
+
+async function createOrder({ customer, items, userId = null, couponCode = null, redeemPoints = 0, gstRatePercent = null }) {
+  const pricing = await computeOrderPricing({
+    items,
+    shippingAddress: customer.address,
+    paymentMethod: customer.paymentMethod,
+    userId,
+    couponCode,
+    redeemPoints,
+    gstRatePercent,
+  });
+  const {
+    pricedItems,
+    subtotalPaise,
+    cgstPaise,
+    sgstPaise,
+    igstPaise,
+    gstPaise,
+    shippingPaise: totalShippingPaise,
+    discountPaise,
+    couponApplied,
+    loyaltyDiscountPaise,
+    loyaltyPointsApplied,
+    referralDiscountPaise,
+    totalPaise,
+    isIntrastate,
+    sellerState,
+    customerState,
+  } = pricing;
+  const taxType = gstPaise === 0 ? 'none' : isIntrastate ? 'intrastate' : 'interstate';
   const paymentGateway = customer.paymentMethod === 'cod' ? 'cod' : null;
 
   let order;
@@ -340,10 +593,19 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
         shipping_address: customer.address,
         subtotal_paise: subtotalPaise,
         gst_paise: gstPaise,
+        cgst_paise: cgstPaise,
+        sgst_paise: sgstPaise,
+        igst_paise: igstPaise,
+        tax_type: taxType,
+        seller_state: sellerState || null,
+        customer_state: customerState || null,
         shipping_paise: totalShippingPaise,
         total_paise: totalPaise,
-        coupon_code: appliedCoupon ? appliedCoupon.code : null,
+        coupon_code: couponApplied ? couponApplied.code : null,
         discount_paise: discountPaise,
+        loyalty_discount_paise: loyaltyDiscountPaise,
+        loyalty_points_redeemed: loyaltyPointsApplied,
+        referral_discount_paise: referralDiscountPaise,
         status: 'placed',
         payment_status: 'pending',
         payment_gateway: paymentGateway,
@@ -361,8 +623,12 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
       unit_price_paise: i.unit_price_paise,
       quantity: i.quantity,
       line_total_paise: i.line_total_paise,
+      hsn_code: i.hsn_code || null,
       gst_rate_percent: i.gst_rate_percent,
       line_gst_paise: i.line_gst_paise,
+      cgst_paise: i.line_cgst_paise,
+      sgst_paise: i.line_sgst_paise,
+      igst_paise: i.line_igst_paise,
       line_shipping_paise: i.line_shipping_paise,
     }));
     const { error: itemsError } = await supabaseAdmin.from('order_items').insert(orderItems);
@@ -371,7 +637,7 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
     order = { ...insertedOrder, order_items: orderItems };
   } else {
     order = {
-      id: `o_${Date.now()}`,
+      id: mock.uid('o'),
       order_number: mock.nextOrderNumber(),
       user_id: userId,
       customer_name: customer.name,
@@ -380,10 +646,19 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
       shipping_address: customer.address,
       subtotal_paise: subtotalPaise,
       gst_paise: gstPaise,
+      cgst_paise: cgstPaise,
+      sgst_paise: sgstPaise,
+      igst_paise: igstPaise,
+      tax_type: taxType,
+      seller_state: sellerState || null,
+      customer_state: customerState || null,
       shipping_paise: totalShippingPaise,
       total_paise: totalPaise,
-      coupon_code: appliedCoupon ? appliedCoupon.code : null,
+      coupon_code: couponApplied ? couponApplied.code : null,
       discount_paise: discountPaise,
+      loyalty_discount_paise: loyaltyDiscountPaise,
+      loyalty_points_redeemed: loyaltyPointsApplied,
+      referral_discount_paise: referralDiscountPaise,
       status: 'placed',
       payment_status: 'pending',
       payment_gateway: paymentGateway,
@@ -392,6 +667,7 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
       tracking_number: null,
       tracking_url: null,
       courier_name: null,
+      refunded_amount_paise: 0,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       order_items: pricedItems.map((i) => ({
@@ -402,33 +678,85 @@ async function createOrder({ customer, items, gstRatePercent, shippingPaise = 0,
         unit_price_paise: i.unit_price_paise,
         quantity: i.quantity,
         line_total_paise: i.line_total_paise,
+        hsn_code: i.hsn_code || null,
         gst_rate_percent: i.gst_rate_percent,
         line_gst_paise: i.line_gst_paise,
+        cgst_paise: i.line_cgst_paise,
+        sgst_paise: i.line_sgst_paise,
+        igst_paise: i.line_igst_paise,
         line_shipping_paise: i.line_shipping_paise,
       })),
     };
     mock.orders.push(order);
   }
 
-  if (appliedCoupon) {
-    await redeemCoupon(appliedCoupon.id).catch(() => {});
+  if (couponApplied) {
+    await redeemCoupon(couponApplied.id, { userId, orderId: order.id }).catch(() => {});
   }
-  if (loyaltyRedemption.points > 0) {
+  if (loyaltyPointsApplied > 0) {
     await addLoyaltyEntry({
       user_id: userId,
       order_id: order.id,
-      points_delta: -loyaltyRedemption.points,
+      points_delta: -loyaltyPointsApplied,
       reason: 'order_redeemed',
     }).catch(() => {});
   }
   // Groove Points are earned only once the order is actually paid (see markOrderPaid),
   // not at creation time — a placed-but-unpaid order shouldn't accrue points.
+  await logOrderEvent({ orderId: order.id, eventType: 'status_change', fromValue: null, toValue: 'placed', actor: userId ? 'customer' : 'guest' }).catch(() => {});
   return order;
 }
 
-async function updateOrderStatus(id, status) {
+// --- Admin Phase 4: order timeline (order_status_events) ---
+// An append-only log of everything that happens to an order, independent of
+// its current-state columns (status, tracking_number, ...) — so the admin
+// Order Detail page can show real history, not just a snapshot. Written
+// automatically by updateOrderStatus/updateOrderTracking/markOrderPaid
+// below, plus directly by the refund workflow further down.
+async function logOrderEvent({ orderId, eventType, fromValue = null, toValue = null, note = null, actor = null }) {
+  const row = {
+    order_id: orderId,
+    event_type: eventType,
+    from_value: fromValue != null ? String(fromValue) : null,
+    to_value: toValue != null ? String(toValue) : null,
+    note: note || null,
+    actor: actor || null,
+  };
+  if (isConfigured) {
+    if (!supabaseAdmin) return null; // best-effort — never block the actual state change on this
+    const { data, error } = await supabaseAdmin.from('order_status_events').insert(row).select().single();
+    if (error) { console.error('logOrderEvent failed:', error.message); return null; }
+    return data;
+  }
+  const event = { id: mock.uid('evt'), created_at: new Date().toISOString(), ...row };
+  mock.orderStatusEvents.push(event);
+  return event;
+}
+
+async function listOrderEvents(orderId) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Order visibility needs SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin
+      .from('order_status_events')
+      .select('*')
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+  return [...mock.orderStatusEvents]
+    .filter((e) => e.order_id === orderId)
+    .reverse()
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+}
+
+async function updateOrderStatus(id, status, actor = null) {
+  let order;
+  let previousStatus = null;
   if (isConfigured) {
     if (!supabaseAdmin) throw new Error('Updating orders needs SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data: existing } = await supabaseAdmin.from('orders').select('status').eq('id', id).maybeSingle();
+    previousStatus = existing ? existing.status : null;
     const { data, error } = await supabaseAdmin
       .from('orders')
       .update({ status, updated_at: new Date().toISOString() })
@@ -436,33 +764,43 @@ async function updateOrderStatus(id, status) {
       .select()
       .single();
     if (error) throw error;
-    return data;
+    order = data;
+  } else {
+    order = mock.orders.find((o) => o.id === id);
+    if (!order) return null;
+    previousStatus = order.status;
+    order.status = status;
+    order.updated_at = new Date().toISOString();
   }
-  const order = mock.orders.find((o) => o.id === id);
-  if (!order) return null;
-  order.status = status;
-  order.updated_at = new Date().toISOString();
+  if (previousStatus !== status) {
+    await logOrderEvent({ orderId: id, eventType: 'status_change', fromValue: previousStatus, toValue: status, actor }).catch(() => {});
+  }
   return order;
 }
 
 // Adds tracking details when staff mark an order Shipped — a plain
 // tracking-number + carrier-link pair (no live courier API in this phase).
-async function updateOrderTracking(id, { trackingNumber, trackingUrl, courierName }) {
+async function updateOrderTracking(id, { trackingNumber, trackingUrl, courierName }, actor = null) {
   const patch = {
     tracking_number: trackingNumber || null,
     tracking_url: trackingUrl || null,
     courier_name: courierName || null,
     updated_at: new Date().toISOString(),
   };
+  let order;
   if (isConfigured) {
     if (!supabaseAdmin) throw new Error('Updating orders needs SUPABASE_SERVICE_ROLE_KEY set.');
     const { data, error } = await supabaseAdmin.from('orders').update(patch).eq('id', id).select().single();
     if (error) throw error;
-    return data;
+    order = data;
+  } else {
+    order = mock.orders.find((o) => o.id === id);
+    if (!order) return null;
+    Object.assign(order, patch);
   }
-  const order = mock.orders.find((o) => o.id === id);
-  if (!order) return null;
-  Object.assign(order, patch);
+  if (trackingNumber) {
+    await logOrderEvent({ orderId: id, eventType: 'tracking_added', toValue: trackingNumber, note: courierName || null, actor }).catch(() => {});
+  }
   return order;
 }
 
@@ -522,7 +860,136 @@ async function markOrderPaid(id, { paymentGateway, paymentOrderId, paymentId }) 
     await earnLoyaltyPoints(order.user_id, order.id, order.subtotal_paise).catch(() => {});
     await awardReferralBonus(order.user_id, order.id).catch(() => {});
   }
+  if (!alreadyPaid) {
+    await logOrderEvent({ orderId: id, eventType: 'payment_marked_paid', toValue: paymentGateway || null, note: paymentId || null }).catch(() => {});
+  }
   return order;
+}
+
+// --- Admin Phase 4: refund / return / cancellation workflow ---
+// Invariant: orders.total_paise is NEVER mutated by any function below (or
+// anywhere else — no route exists that can PATCH it). A refund instead
+// accumulates in its own running total, orders.refunded_amount_paise, so
+// "what was charged" and "how much has been refunded back" always stay two
+// separately-auditable numbers rather than one value silently edited.
+
+async function listOrderRefunds(orderId) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Order visibility needs SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin
+      .from('order_refunds')
+      .select('*')
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+  return [...mock.orderRefunds]
+    .filter((r) => r.order_id === orderId)
+    .reverse()
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+}
+
+// Creates a refund/return/cancellation request. Defaults to status
+// 'requested' — use updateOrderRefundStatus to process or reject it. Admin
+// UIs that want a same-click "request and process" flow just call both in
+// sequence; that's still two separately-logged, individually-auditable steps.
+async function requestOrderRefund({ orderId, type = 'refund', amountPaise, reason, note = null, requestedBy = null }) {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error('Order not found.');
+  const amount = Math.round(Number(amountPaise));
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('amountPaise must be a positive number.');
+  if (!reason) throw new Error('reason is required.');
+  const alreadyRefunded = Number(order.refunded_amount_paise) || 0;
+  const totalPaise = Number(order.total_paise) || 0;
+  if (alreadyRefunded + amount > totalPaise) {
+    throw new Error(`That would refund more than the order total (already refunded ₹${(alreadyRefunded / 100).toFixed(2)} of ₹${(totalPaise / 100).toFixed(2)}).`);
+  }
+  const row = {
+    order_id: orderId,
+    type: ['refund', 'cancellation', 'return'].includes(type) ? type : 'refund',
+    status: 'requested',
+    amount_paise: amount,
+    reason,
+    note: note || null,
+    requested_by: requestedBy || null,
+    processed_by: null,
+    processed_at: null,
+  };
+  let refund;
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('order_refunds').insert(row).select().single();
+    if (error) throw error;
+    refund = data;
+  } else {
+    refund = { id: mock.uid('refund'), created_at: new Date().toISOString(), ...row };
+    mock.orderRefunds.push(refund);
+  }
+  await logOrderEvent({ orderId, eventType: 'refund_requested', toValue: `₹${(amount / 100).toFixed(2)}`, note: reason, actor: requestedBy }).catch(() => {});
+  return refund;
+}
+
+// Moves a refund from 'requested' to 'processed' or 'rejected'. Only
+// 'processed' touches the order: it increments refunded_amount_paise by the
+// refund's own amount_paise (total_paise itself is never written to).
+// Re-processing an already-processed/rejected refund is rejected outright —
+// each refund resolves exactly once.
+async function updateOrderRefundStatus(refundId, { status, processedBy = null, note = null }) {
+  if (!['processed', 'rejected'].includes(status)) throw new Error("status must be 'processed' or 'rejected'.");
+  let refund;
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('order_refunds').select('*').eq('id', refundId).maybeSingle();
+    if (error) throw error;
+    refund = data;
+  } else {
+    refund = mock.orderRefunds.find((r) => r.id === refundId);
+  }
+  if (!refund) throw new Error('Refund not found.');
+  if (refund.status !== 'requested') throw new Error(`This refund was already ${refund.status}.`);
+
+  const patch = {
+    status,
+    processed_by: processedBy || null,
+    processed_at: new Date().toISOString(),
+    ...(note ? { note: `${refund.note ? refund.note + ' — ' : ''}${note}` } : {}),
+  };
+  if (isConfigured) {
+    const { data, error } = await supabaseAdmin.from('order_refunds').update(patch).eq('id', refundId).select().single();
+    if (error) throw error;
+    refund = data;
+  } else {
+    Object.assign(refund, patch);
+  }
+
+  if (status === 'processed') {
+    const order = await getOrder(refund.order_id);
+    if (order) {
+      const newRefundedTotal = (Number(order.refunded_amount_paise) || 0) + Number(refund.amount_paise);
+      if (isConfigured) {
+        if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+        const { error } = await supabaseAdmin.from('orders').update({ refunded_amount_paise: newRefundedTotal, updated_at: new Date().toISOString() }).eq('id', refund.order_id);
+        if (error) throw error;
+      } else {
+        const mockOrder = mock.orders.find((o) => o.id === refund.order_id);
+        if (mockOrder) {
+          mockOrder.refunded_amount_paise = newRefundedTotal;
+          mockOrder.updated_at = new Date().toISOString();
+        }
+      }
+    }
+  }
+
+  await logOrderEvent({
+    orderId: refund.order_id,
+    eventType: status === 'processed' ? 'refund_processed' : 'refund_rejected',
+    toValue: `₹${(Number(refund.amount_paise) / 100).toFixed(2)}`,
+    note: note || null,
+    actor: processedBy,
+  }).catch(() => {});
+
+  return refund;
 }
 
 // --- Store settings (a thin, admin-editable wrapper over the site_content
@@ -551,7 +1018,7 @@ async function createCoupon(input) {
     return data;
   }
   const coupon = {
-    id: `coupon_${Date.now()}`,
+    id: mock.uid('coupon'),
     discount_type: 'percent',
     min_order_paise: 0,
     max_discount_paise: null,
@@ -559,6 +1026,10 @@ async function createCoupon(input) {
     times_used: 0,
     is_active: true,
     expires_at: null,
+    starts_at: null,
+    per_customer_limit: null,
+    product_ids: null,
+    category_ids: null,
     ...input,
     code: String(input.code || '').toUpperCase(),
   };
@@ -592,39 +1063,108 @@ async function deleteCoupon(id) {
   return true;
 }
 
+// How many times a signed-in customer has already redeemed a given coupon —
+// the only way to actually enforce coupons.per_customer_limit (Admin Phase
+// 5), since the pre-existing times_used column is a bare global counter
+// with no per-customer breakdown. Guest checkouts (no userId) never have a
+// per-customer count — see the coupon_redemptions table comment.
+async function countCouponRedemptionsForUser(couponId, userId) {
+  if (!userId) return 0;
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { count, error } = await client
+      .from('coupon_redemptions')
+      .select('id', { count: 'exact', head: true })
+      .eq('coupon_id', couponId)
+      .eq('user_id', userId);
+    if (error) throw error;
+    return count || 0;
+  }
+  return mock.couponRedemptions.filter((r) => r.coupon_id === couponId && r.user_id === userId).length;
+}
+
+// Sums the GST-inclusive line value of only the cart lines a
+// products/categories-restricted coupon actually applies to. pricedItems is
+// computeOrderPricing's own already-priced line items (each has
+// product_id/category_id/line_total_paise), so this never re-fetches or
+// re-derives anything already computed.
+function eligibleCouponGoodsPaise(pricedItems, coupon) {
+  const productIds = Array.isArray(coupon.product_ids) ? coupon.product_ids : [];
+  const categoryIds = Array.isArray(coupon.category_ids) ? coupon.category_ids : [];
+  if (!productIds.length && !categoryIds.length) {
+    return pricedItems.reduce((sum, i) => sum + i.line_total_paise, 0);
+  }
+  return pricedItems.reduce((sum, i) => {
+    const matches = (i.product_id && productIds.includes(i.product_id)) || (i.category_id && categoryIds.includes(i.category_id));
+    return matches ? sum + i.line_total_paise : sum;
+  }, 0);
+}
+
 // Validates a coupon code server-side against the GST-inclusive goods total
-// (never trust a discount amount sent by the client). Returns
+// (never trust a discount amount sent by the client). `pricedItems` (from
+// computeOrderPricing) and `userId` are optional — omitting them just skips
+// the product/category-restriction and per-customer-limit checks, so
+// existing callers that only care about the plain code+amount checks (e.g.
+// a bare POST /api/coupons/validate with no cart) keep working. Returns
 // { valid: true, coupon, discountPaise } or { valid: false, reason }.
-async function validateCoupon(code, goodsPaise) {
+async function validateCoupon(code, goodsPaise, { pricedItems = null, userId = null } = {}) {
   if (!code) return { valid: false, reason: 'No code provided.' };
   const all = await listCoupons();
   const coupon = all.find((c) => c.code.toUpperCase() === String(code).toUpperCase());
   if (!coupon) return { valid: false, reason: 'Coupon code not found.' };
   if (!coupon.is_active) return { valid: false, reason: 'This coupon is no longer active.' };
+  if (coupon.starts_at && new Date(coupon.starts_at) > new Date()) return { valid: false, reason: 'This coupon is not active yet.' };
   if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) return { valid: false, reason: 'This coupon has expired.' };
   if (coupon.usage_limit != null && coupon.times_used >= coupon.usage_limit) return { valid: false, reason: 'This coupon has reached its usage limit.' };
+  if (coupon.per_customer_limit != null) {
+    if (!userId) return { valid: false, reason: 'Sign in to use this coupon.' };
+    const usedByCustomer = await countCouponRedemptionsForUser(coupon.id, userId);
+    if (usedByCustomer >= coupon.per_customer_limit) {
+      return { valid: false, reason: "You've already used this coupon the maximum number of times." };
+    }
+  }
+
+  let eligibleGoodsPaise = goodsPaise;
+  const hasRestriction = (Array.isArray(coupon.product_ids) && coupon.product_ids.length) || (Array.isArray(coupon.category_ids) && coupon.category_ids.length);
+  if (hasRestriction) {
+    if (!pricedItems || !pricedItems.length) return { valid: false, reason: 'This coupon only applies to specific products.' };
+    eligibleGoodsPaise = eligibleCouponGoodsPaise(pricedItems, coupon);
+    if (eligibleGoodsPaise <= 0) return { valid: false, reason: "This coupon doesn't apply to any items in your cart." };
+  }
+
   if (coupon.min_order_paise && goodsPaise < coupon.min_order_paise) {
     return { valid: false, reason: `Minimum order of ₹${(coupon.min_order_paise / 100).toFixed(0)} required for this coupon.` };
   }
   let discountPaise =
-    coupon.discount_type === 'percent' ? Math.round((goodsPaise * Number(coupon.discount_value)) / 100) : Number(coupon.discount_value);
+    coupon.discount_type === 'percent' ? Math.round((eligibleGoodsPaise * Number(coupon.discount_value)) / 100) : Number(coupon.discount_value);
   if (coupon.max_discount_paise != null) discountPaise = Math.min(discountPaise, coupon.max_discount_paise);
-  discountPaise = Math.max(0, Math.min(discountPaise, goodsPaise));
+  discountPaise = Math.max(0, Math.min(discountPaise, eligibleGoodsPaise));
   return { valid: true, coupon, discountPaise };
 }
 
-async function redeemCoupon(id) {
+// Records a successful coupon use. userId/orderId are optional (a bare
+// redemption still increments the global times_used counter), but a
+// per-customer-limit coupon can only ever be enforced for redemptions that
+// DO carry a userId — see coupon_redemptions' table comment in db/schema.sql.
+async function redeemCoupon(id, { userId = null, orderId = null } = {}) {
   if (isConfigured) {
     if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
     const { data: current, error: fetchErr } = await supabaseAdmin.from('coupons').select('times_used').eq('id', id).single();
     if (fetchErr) throw fetchErr;
     const { error } = await supabaseAdmin.from('coupons').update({ times_used: (current.times_used || 0) + 1 }).eq('id', id);
     if (error) throw error;
+    if (userId) {
+      const { error: redemptionError } = await supabaseAdmin.from('coupon_redemptions').insert({ coupon_id: id, user_id: userId, order_id: orderId });
+      if (redemptionError) console.error('coupon_redemptions insert failed:', redemptionError.message);
+    }
     return true;
   }
   const coupon = mock.coupons.find((c) => c.id === id);
   if (!coupon) return false;
   coupon.times_used = (coupon.times_used || 0) + 1;
+  if (userId) {
+    mock.couponRedemptions.push({ id: mock.uid('cpnredeem'), coupon_id: id, user_id: userId, order_id: orderId, created_at: new Date().toISOString() });
+  }
   return true;
 }
 
@@ -646,7 +1186,7 @@ async function createShippingRateSlab(input) {
     if (error) throw error;
     return data;
   }
-  const slab = { id: `ship_${Date.now()}`, sort_order: mock.shippingRateSlabs.length + 1, ...input };
+  const slab = { id: mock.uid('ship'), sort_order: mock.shippingRateSlabs.length + 1, ...input };
   mock.shippingRateSlabs.push(slab);
   return slab;
 }
@@ -677,18 +1217,107 @@ async function deleteShippingRateSlab(id) {
   return true;
 }
 
-// Chargeable weight = max(actual weight, volumetric weight), matched against
-// the slabs in ascending max_weight_grams order; the row with max_weight_grams
-// null is the catch-all for anything heavier than every other slab.
-async function computeShippingForWeight(totalGrams) {
+// --- Named shipping classes (Admin Phase 2) — see resolveProductShippingOverridePaise above ---
+async function listShippingClasses() {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client.from('shipping_classes').select('*').order('name', { ascending: true });
+    if (error) throw error;
+    return data;
+  }
+  return [...mock.shippingClasses];
+}
+
+async function getShippingClassById(id) {
+  if (!id) return null;
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client.from('shipping_classes').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  return mock.shippingClasses.find((c) => c.id === id) || null;
+}
+
+async function createShippingClass(input) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('shipping_classes').insert(input).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const shippingClass = { id: mock.uid('shipclass'), flat_rate_paise: null, is_active: true, ...input };
+  mock.shippingClasses.push(shippingClass);
+  return shippingClass;
+}
+
+async function updateShippingClass(id, patch) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('shipping_classes').update(patch).eq('id', id).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const shippingClass = mock.shippingClasses.find((c) => c.id === id);
+  if (!shippingClass) return null;
+  Object.assign(shippingClass, patch);
+  return shippingClass;
+}
+
+async function deleteShippingClass(id) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { error } = await supabaseAdmin.from('shipping_classes').delete().eq('id', id);
+    if (error) throw error;
+    return true;
+  }
+  const idx = mock.shippingClasses.findIndex((c) => c.id === id);
+  if (idx === -1) return false;
+  mock.shippingClasses.splice(idx, 1);
+  return true;
+}
+
+// Shipping rate slabs can optionally be scoped into a "zone": a list of
+// Indian states, a list of pincode prefixes, a min/max order value, and/or
+// a min/max chargeable weight (is_active can also switch a slab off without
+// deleting it). A slab left blank on all of those still just works as a
+// plain weight-based catch-all — the original slab shape from before zones
+// existed — so nothing already configured needs to change.
+//
+// Matching: every condition set on a slab must be satisfied (states/
+// pincode_prefixes/min-max order/min-max weight are all AND'd together;
+// an empty/unset condition always matches). Among every slab that matches,
+// the most specific one wins (pincode-scoped > state-scoped > generic), and
+// the cheapest wins among equally specific matches.
+async function computeShipping({ totalGrams = 0, orderValuePaise = 0, state = '', pincode = '' } = {}) {
   const slabs = await listShippingRateSlabs();
-  const sorted = [...slabs].sort((a, b) => {
-    if (a.max_weight_grams == null) return 1;
-    if (b.max_weight_grams == null) return -1;
-    return a.max_weight_grams - b.max_weight_grams;
+  const st = (state || '').trim().toLowerCase();
+  const pin = (pincode || '').trim();
+  const matches = slabs.filter((s) => {
+    if (s.is_active === false) return false;
+    if (s.min_weight_grams != null && totalGrams < s.min_weight_grams) return false;
+    if (s.max_weight_grams != null && totalGrams > s.max_weight_grams) return false;
+    if (s.min_order_paise != null && orderValuePaise < s.min_order_paise) return false;
+    if (s.max_order_paise != null && orderValuePaise > s.max_order_paise) return false;
+    if (Array.isArray(s.states) && s.states.length > 0) {
+      if (!st || !s.states.some((x) => String(x).trim().toLowerCase() === st)) return false;
+    }
+    if (Array.isArray(s.pincode_prefixes) && s.pincode_prefixes.length > 0) {
+      if (!pin || !s.pincode_prefixes.some((p) => pin.startsWith(String(p).trim()))) return false;
+    }
+    return true;
   });
-  const match = sorted.find((s) => s.max_weight_grams == null || totalGrams <= s.max_weight_grams);
-  return match ? Number(match.price_paise) : 0;
+  if (matches.length === 0) return 0;
+  const specificity = (s) =>
+    (Array.isArray(s.pincode_prefixes) && s.pincode_prefixes.length ? 2 : 0) + (Array.isArray(s.states) && s.states.length ? 1 : 0);
+  matches.sort((a, b) => specificity(b) - specificity(a) || Number(a.price_paise) - Number(b.price_paise));
+  return Number(matches[0].price_paise) || 0;
+}
+
+// Backward-compatible: weight is the only known dimension (e.g. a caller
+// that doesn't have a shipping address yet).
+async function computeShippingForWeight(totalGrams) {
+  return computeShipping({ totalGrams });
 }
 
 // --- Groove Points loyalty (ledger-based — balance is the sum of points_delta) ---
@@ -709,6 +1338,30 @@ async function listLoyaltyLedger(userId) {
 async function getLoyaltyBalance(userId) {
   const rows = await listLoyaltyLedger(userId);
   return rows.reduce((sum, r) => sum + r.points_delta, 0);
+}
+
+// Every loyalty_ledger row across every customer, optionally date-ranged —
+// unlike listLoyaltyLedger (one customer's history), this is for admin-side
+// aggregate reporting (Admin Phase 6), e.g. total referral bonus points
+// paid out in a given month. from/to are inclusive 'YYYY-MM-DD' strings.
+async function listAllLoyaltyLedger({ from = null, to = null } = {}) {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    let query = client.from('loyalty_ledger').select('*').order('created_at', { ascending: false });
+    if (from) query = query.gte('created_at', `${from}T00:00:00.000Z`);
+    if (to) query = query.lte('created_at', `${to}T23:59:59.999Z`);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data;
+  }
+  return mock.loyaltyLedger
+    .filter((l) => {
+      const d = (l.created_at || '').slice(0, 10);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    })
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 }
 
 async function addLoyaltyEntry(entry) {
@@ -1319,17 +1972,24 @@ const DEFAULT_CONTENT = {
     cta_secondary_label: 'Our Farms',
     cta_secondary_href: '/about',
   },
+  // Powers the /about ("Our Story") page's editorial text + timeline —
+  // see frontend/about.html. NOT shown on the homepage (the homepage's
+  // "Our Philosophy" section is fixed editorial copy on purpose — see the
+  // comment in index.html above that section for why it deliberately
+  // doesn't read this key). This key used to hold specific, unverified
+  // claims (a partner-farm count, a certification claim, named years and
+  // headcounts) that were never actually reviewed/approved — removed on
+  // 2026-09-09 per the user's explicit call that they were placeholder,
+  // not real. `milestones` now starts empty on purpose: add real ones
+  // here (Admin -> Homepage Content -> "Our Story section") only once
+  // there's something true to say — an empty list is hidden on the page
+  // entirely rather than shown with placeholder entries.
   homepage_story: {
     eyebrow: 'Our Story',
     title_line1: 'Rooted in soil,',
-    title_line2: 'pressed by hand.',
-    body: 'We partner with named farms and press each batch the slow way — wood-ghani, stone-turned, no heat added. It takes longer. It tastes like it should.',
-    milestones: [
-      { year: '2018', text: 'Started blending botanical oils in a farmhouse kitchen.' },
-      { year: '2020', text: 'Opened a countryside pressing studio with three artisans.' },
-      { year: '2022', text: 'Earned organic & cruelty-free certification for our core range.' },
-      { year: '2024', text: 'Launched a returnable-glass refill program with 40 retail partners.' },
-    ],
+    title_line2: 'made the slower way.',
+    body: 'We believe good oil shouldn\'t be rushed — pressed in small batches, filtered gently, and packaged to be reused rather than thrown away.',
+    milestones: [],
   },
   homepage_feature_strip: {
     items: [
@@ -1358,6 +2018,13 @@ const DEFAULT_CONTENT = {
     business_legal_name: '',
     gstin: '',
     business_address: '',
+    // The state the business is registered/GST-registered in — compared
+    // against each order's shipping-address state to decide CGST+SGST
+    // (same state = intrastate) vs IGST (different state = interstate).
+    // Left blank on purpose (never fabricated) — until an admin fills this
+    // in, every order is treated as intrastate (see computeOrderPricing),
+    // which matches how a single-state business actually operates.
+    seller_state: '',
     support_email: '',
     support_phone: '',
     charge_gst: true,
@@ -1400,6 +2067,25 @@ const DEFAULT_CONTENT = {
   page_shipping_policy: {
     title: 'Shipping Policy',
     body: 'We currently ship across India. Orders are typically dispatched within 1-2 business days of confirmation.\n\nShipping charges are calculated at checkout based on the weight of your order, and shown before you pay. Orders above the free-shipping threshold (shown at checkout) ship free.\n\nDelivery timelines vary by location, typically 3-7 business days after dispatch.\n\nThis is placeholder text — please review and replace it with details appropriate for your business before going live.',
+  },
+  // FAQ page (/faq) — a real linkable page with an accordion, distinct from
+  // the flat legal pages above. Every answer here is derived from behavior
+  // that's actually implemented (GST-inclusive pricing, weight-based
+  // shipping + free-shipping threshold, Razorpay/COD, Groove Points,
+  // returns) — nothing about farm names, certifications, or specific
+  // delivery-time promises is invented. Admin-editable like every other
+  // page_* key; add/edit/remove items freely from Admin → Content.
+  page_faq: {
+    title: 'Frequently Asked Questions',
+    items: [
+      { question: 'How is Groove Organics oil made?', answer: 'Cold-pressed / wood-pressed using the traditional chekku (ghani) method — no heat, no chemical extraction, no refining.' },
+      { question: 'What payment methods do you accept?', answer: 'UPI, credit/debit cards, and net banking via Razorpay, plus Cash on Delivery where it’s enabled at checkout.' },
+      { question: 'Do your prices include GST?', answer: 'Yes. The price shown is exactly what you pay — GST is included, and the breakup is shown at checkout and on your invoice.' },
+      { question: 'How is shipping calculated?', answer: 'Shipping is calculated from your order’s weight and shown before you pay. Orders above the free-shipping threshold (shown at checkout) ship free.' },
+      { question: 'What is your return/refund policy?', answer: 'See our Refund & Return Policy page for the full details on damaged, defective, or incorrect items.' },
+      { question: 'What are Groove Points?', answer: 'Our loyalty program, where enabled — earn points on paid orders and redeem them for a discount at checkout. Check your balance any time from your account dashboard.' },
+      { question: 'Can I track my order?', answer: 'Yes — once your order ships, tracking details (when available) appear on your order confirmation page and in your account’s order history.' },
+    ],
   },
 };
 
@@ -1461,7 +2147,7 @@ async function createVariant(productId, input) {
     return data;
   }
   const variant = {
-    id: `var_${Date.now()}`,
+    id: mock.uid('var'),
     product_id: productId,
     size: null,
     color: null,
@@ -1500,6 +2186,278 @@ async function deleteVariant(id) {
   return true;
 }
 
+async function getVariantById(id) {
+  if (!id) return null;
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client.from('product_variants').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  return mock.productVariants.find((v) => v.id === id) || null;
+}
+
+// =========================================================================
+// Stock-adjustment ledger (Admin Phase 2) — see db/schema.sql's
+// stock_adjustments table comment. Two entry points share this one
+// function: the dedicated "Adjust stock" admin form (an intentional
+// adjustment with a required reason/note) and the plain quick-edit stock
+// field in the Products table (auto-logged as reason 'manual_edit' by the
+// PATCH /api/products/:id and /api/variants/:id route handlers) — so every
+// stock change ends up in the same auditable history no matter which UI
+// path made it. Throws rather than allowing stock to go negative.
+// =========================================================================
+async function recordStockAdjustment({ productId, variantId = null, variantLabel = null, delta, reason, note = null, adjustedBy = null }) {
+  if (!productId) throw new Error('productId is required.');
+  if (!Number.isFinite(delta) || delta === 0) throw new Error('delta must be a non-zero number.');
+  if (!reason) throw new Error('reason is required.');
+
+  let previousStock;
+  if (variantId) {
+    const variant = await getVariantById(variantId);
+    if (!variant) throw new Error('Variant not found.');
+    previousStock = Number(variant.stock) || 0;
+  } else {
+    const product = await getProductById(productId);
+    if (!product) throw new Error('Product not found.');
+    previousStock = Number(product.stock) || 0;
+  }
+
+  const newStock = previousStock + delta;
+  if (newStock < 0) {
+    throw new Error(`That adjustment would take stock below zero (currently ${previousStock}).`);
+  }
+
+  if (variantId) {
+    await updateVariant(variantId, { stock: newStock });
+  } else {
+    await updateProduct(productId, { stock: newStock });
+  }
+
+  const row = {
+    product_id: productId,
+    variant_id: variantId || null,
+    variant_label: variantLabel || null,
+    delta,
+    reason,
+    note: note || null,
+    previous_stock: previousStock,
+    new_stock: newStock,
+    adjusted_by: adjustedBy || null,
+  };
+
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('stock_adjustments').insert(row).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const adjustment = { id: mock.uid('stockadj'), created_at: new Date().toISOString(), ...row };
+  mock.stockAdjustments.push(adjustment);
+  return adjustment;
+}
+
+async function listStockAdjustments(productId, { limit = 100 } = {}) {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client
+      .from('stock_adjustments')
+      .select('*')
+      .eq('product_id', productId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data;
+  }
+  // Demo-mode timestamps are millisecond resolution, so two adjustments made
+  // in the same request/test can tie exactly. Reverse to most-recently-
+  // pushed-first before the (stable) sort so ties still land newest-first
+  // instead of silently falling back to insertion order.
+  return [...mock.stockAdjustments]
+    .filter((a) => a.product_id === productId)
+    .reverse()
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, limit);
+}
+
+// =========================================================================
+// Admin Phase 6: cross-domain audit log. See db/schema.sql's audit_log
+// table comment — this is the catch-all for admin write actions that had
+// zero history anywhere before Phase 6 (product/variant/category/coupon/
+// shipping-rate/shipping-class writes), plus a lightweight entry for
+// actions that already have their own detailed trail elsewhere (stock
+// adjustments, order events, customer status), so "everything this admin
+// did" is answerable from one place. Best-effort and fire-and-forget in
+// spirit (wrapped in .catch(() => {}) by every caller) — a logging failure
+// must never block the actual write it's describing.
+// =========================================================================
+async function logAudit({ actor = null, actorRole = null, action, entityType = null, entityId = null, summary }) {
+  const row = {
+    actor: actor || null,
+    actor_role: actorRole || null,
+    action,
+    entity_type: entityType,
+    entity_id: entityId != null ? String(entityId) : null,
+    summary,
+  };
+  if (isConfigured) {
+    if (!supabaseAdmin) return null;
+    const { data, error } = await supabaseAdmin.from('audit_log').insert(row).select().single();
+    if (error) { console.error('logAudit failed:', error.message); return null; }
+    return data;
+  }
+  const entry = { id: mock.uid('audit'), created_at: new Date().toISOString(), ...row };
+  mock.auditLog.push(entry);
+  return entry;
+}
+
+// from/to are inclusive 'YYYY-MM-DD' strings; entityType/actor optionally
+// narrow further. Newest first, capped at `limit`.
+async function listAuditLog({ from = null, to = null, entityType = null, actor = null, limit = 200 } = {}) {
+  let rows;
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    let query = client.from('audit_log').select('*').order('created_at', { ascending: false }).limit(limit);
+    if (from) query = query.gte('created_at', `${from}T00:00:00.000Z`);
+    if (to) query = query.lte('created_at', `${to}T23:59:59.999Z`);
+    if (entityType) query = query.eq('entity_type', entityType);
+    if (actor) query = query.eq('actor', actor);
+    const { data, error } = await query;
+    if (error) throw error;
+    rows = data;
+  } else {
+    rows = [...mock.auditLog]
+      .filter((a) => {
+        const d = (a.created_at || '').slice(0, 10);
+        if (from && d < from) return false;
+        if (to && d > to) return false;
+        if (entityType && a.entity_type !== entityType) return false;
+        if (actor && a.actor !== actor) return false;
+        return true;
+      })
+      .reverse()
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, limit);
+  }
+  return rows;
+}
+
+// =========================================================================
+// Admin Phase 6: server-side, date-ranged reports. Previously the whole
+// Reports tab pulled every order/product/coupon over the wire on every load
+// and computed everything client-side with no way to look at anything but
+// "all time" — this is the one place date-filtered aggregate reporting
+// happens now, so the admin UI (and any future report consumer) always gets
+// numbers computed the same way. from/to are inclusive 'YYYY-MM-DD' strings,
+// or null for unbounded on that side (== the old "all time" behavior).
+// =========================================================================
+async function getReportsSummary({ from = null, to = null } = {}) {
+  const inRange = (createdAt) => {
+    if (!createdAt) return false;
+    const d = String(createdAt).slice(0, 10);
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  };
+
+  const allOrders = await listOrders();
+  const rangedOrders = from || to ? allOrders.filter((o) => inRange(o.created_at)) : allOrders;
+  const paidOrders = rangedOrders.filter((o) => o.payment_status === 'paid');
+
+  const revenuePaise = paidOrders.reduce((sum, o) => sum + (o.total_paise || 0), 0);
+  const refundedPaise = rangedOrders.reduce((sum, o) => sum + (o.refunded_amount_paise || 0), 0);
+  const orderCount = rangedOrders.length;
+  const paidOrderCount = paidOrders.length;
+  const aovPaise = paidOrderCount ? Math.round(revenuePaise / paidOrderCount) : 0;
+
+  const ordersByStatus = {};
+  rangedOrders.forEach((o) => {
+    ordersByStatus[o.status] = (ordersByStatus[o.status] || 0) + 1;
+  });
+
+  const salesByProduct = {};
+  paidOrders.forEach((o) => {
+    (o.order_items || []).forEach((i) => {
+      salesByProduct[i.product_name] = (salesByProduct[i.product_name] || 0) + i.quantity;
+    });
+  });
+  const bestSellers = Object.entries(salesByProduct)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([name, quantity]) => ({ name, quantity }));
+
+  // Coupon usage IN RANGE — computed from the orders themselves
+  // (orders.coupon_code + created_at) rather than coupons.times_used (a
+  // bare all-time global counter with no date breakdown), so this reflects
+  // usage in the selected window for both guest and signed-in orders alike.
+  const couponUsageByCode = {};
+  rangedOrders.forEach((o) => {
+    if (!o.coupon_code) return;
+    if (!couponUsageByCode[o.coupon_code]) couponUsageByCode[o.coupon_code] = { code: o.coupon_code, orders: 0, discountPaise: 0 };
+    couponUsageByCode[o.coupon_code].orders += 1;
+    couponUsageByCode[o.coupon_code].discountPaise += o.discount_paise || 0;
+  });
+  const couponUsage = Object.values(couponUsageByCode).sort((a, b) => b.orders - a.orders);
+
+  // Inventory — NOT date-ranged (current stock is current stock regardless
+  // of the report window), same threshold logic the old client-side Reports
+  // tab used (per-product override, else the store-wide default).
+  const [products, settings, customers] = await Promise.all([listProducts({ includeInactive: true }), getStoreSettings(), listCustomers()]);
+  const defaultLowStockThreshold = settings.low_stock_threshold != null ? settings.low_stock_threshold : 10;
+  const lowStock = products
+    .filter((p) => !p.is_coming_soon && p.stock <= (p.low_stock_threshold != null ? p.low_stock_threshold : defaultLowStockThreshold))
+    .sort((a, b) => a.stock - b.stock)
+    .map((p) => ({ id: p.id, name: p.name, stock: p.stock, threshold: p.low_stock_threshold != null ? p.low_stock_threshold : defaultLowStockThreshold }));
+
+  // Customers IN RANGE — new signups, and top spenders (by paid orders) in
+  // the window. Matched by email since guest orders have no user_id.
+  const newCustomerCount = customers.filter((c) => c.role === 'customer' && inRange(c.created_at)).length;
+  const spendByEmail = {};
+  paidOrders.forEach((o) => {
+    const key = (o.customer_email || '').toLowerCase();
+    if (!key) return;
+    spendByEmail[key] = (spendByEmail[key] || 0) + (o.total_paise || 0);
+  });
+  const topCustomers = Object.entries(spendByEmail)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([email, spendPaise]) => {
+      const match = customers.find((c) => (c.email || '').toLowerCase() === email);
+      return { email, full_name: match ? match.full_name : null, spendPaise };
+    });
+
+  // Referrals IN RANGE — new referred signups, the automatic first-order
+  // discount they received (orders.referral_discount_paise), and the Groove
+  // Points bonus paid to the REFERRER (loyalty_ledger reason 'referral_bonus').
+  const referralSignupCount = customers.filter((c) => c.role === 'customer' && c.referred_by && inRange(c.created_at)).length;
+  const referralDiscountPaidPaise = rangedOrders.reduce((sum, o) => sum + (o.referral_discount_paise || 0), 0);
+  const ledgerInRange = await listAllLoyaltyLedger({ from, to });
+  const referralBonusPointsPaidOut = ledgerInRange.filter((l) => l.reason === 'referral_bonus').reduce((sum, l) => sum + (l.points_delta || 0), 0);
+  const pointsEarned = ledgerInRange.filter((l) => l.reason === 'order_earned').reduce((sum, l) => sum + (l.points_delta || 0), 0);
+  const pointsRedeemed = ledgerInRange.filter((l) => l.points_delta < 0).reduce((sum, l) => sum - l.points_delta, 0);
+
+  return {
+    rangeFrom: from,
+    rangeTo: to,
+    revenuePaise,
+    refundedPaise,
+    orderCount,
+    paidOrderCount,
+    aovPaise,
+    ordersByStatus,
+    bestSellers,
+    couponUsage,
+    lowStock,
+    newCustomerCount,
+    topCustomers,
+    referralSignupCount,
+    referralDiscountPaidPaise,
+    referralBonusPointsPaidOut,
+    pointsEarned,
+    pointsRedeemed,
+  };
+}
+
 module.exports = {
   toPublicProduct,
   listCategories,
@@ -1516,11 +2474,19 @@ module.exports = {
   listOrdersForUser,
   getOrder,
   createOrder,
+  computeOrderPricing,
+  chargeableWeightGrams,
+  pooledChargeableGrams,
   updateOrderStatus,
   updateOrderTracking,
   attachPaymentOrderId,
   getOrderByPaymentOrderId,
   markOrderPaid,
+  logOrderEvent,
+  listOrderEvents,
+  listOrderRefunds,
+  requestOrderRefund,
+  updateOrderRefundStatus,
   addNewsletterSubscriber,
   addContactMessage,
   listBanners,
@@ -1549,6 +2515,13 @@ module.exports = {
   createVariant,
   updateVariant,
   deleteVariant,
+  getVariantById,
+  recordStockAdjustment,
+  listStockAdjustments,
+  logAudit,
+  listAuditLog,
+  listAllLoyaltyLedger,
+  getReportsSummary,
   getStoreSettings,
   listCoupons,
   createCoupon,
@@ -1556,10 +2529,18 @@ module.exports = {
   deleteCoupon,
   validateCoupon,
   redeemCoupon,
+  countCouponRedemptionsForUser,
   listShippingRateSlabs,
   createShippingRateSlab,
   updateShippingRateSlab,
   deleteShippingRateSlab,
+  listShippingClasses,
+  getShippingClassById,
+  createShippingClass,
+  updateShippingClass,
+  deleteShippingClass,
+  resolveProductShippingOverridePaise,
+  computeShipping,
   computeShippingForWeight,
   listLoyaltyLedger,
   getLoyaltyBalance,
@@ -1568,6 +2549,7 @@ module.exports = {
   previewLoyaltyRedemption,
   redeemLoyaltyPoints,
   listCustomers,
+  setCustomerActive,
   getProfile,
   getOrCreateReferralCode,
   hasExistingOrders,

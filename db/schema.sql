@@ -25,6 +25,17 @@ create table if not exists public.profiles (
 alter table public.profiles add column if not exists referral_code text unique;
 alter table public.profiles add column if not exists referred_by uuid references public.profiles(id);
 
+-- Admin Phase 3: account deactivate/reactivate. is_active is checked on
+-- every request (see backend/middleware/auth.js's resolveUser) so a
+-- deactivation takes effect immediately even for an already-issued session
+-- token, not just on the next sign-in. For a live Supabase account,
+-- deactivating also bans the underlying auth.users row (see
+-- dataStore.setCustomerActive) as a second layer that blocks future
+-- sign-ins/token refreshes too.
+alter table public.profiles add column if not exists is_active boolean not null default true;
+alter table public.profiles add column if not exists deactivated_at timestamptz;
+alter table public.profiles add column if not exists deactivated_reason text;
+
 -- Generates a short, unique, human-shareable referral code — collisions are
 -- astronomically unlikely at 8 base36 characters, but the loop + unique
 -- constraint make it impossible to hand out a duplicate either way.
@@ -85,6 +96,15 @@ create table if not exists public.categories (
   created_at timestamptz not null default now()
 );
 
+-- Admin Phase 5: category description/image/active/SEO fields — previously
+-- only name/slug/parent/sort_order existed (sort_order itself only became a
+-- real, UI-exposed feature in the Admin Phase 1 pass).
+alter table public.categories add column if not exists description text;
+alter table public.categories add column if not exists image_url text;
+alter table public.categories add column if not exists is_active boolean not null default true;
+alter table public.categories add column if not exists seo_title text;
+alter table public.categories add column if not exists seo_meta_description text;
+
 -- ---------------------------------------------------------------------
 -- products
 -- ---------------------------------------------------------------------
@@ -144,6 +164,96 @@ create table if not exists public.products (
   updated_at timestamptz not null default now()
 );
 
+-- Added after products already existed in production (Phase 1b PDP rebuild)
+-- — ALTERs with IF NOT EXISTS so re-running this file backfills them onto an
+-- existing database. All admin-editable, all optional: the storefront only
+-- renders a PDP section when the admin has actually filled it in, so a
+-- product with none of these set just shows the original, shorter page —
+-- nothing is ever fabricated client-side to fill an empty section.
+alter table public.products add column if not exists gallery_images jsonb not null default '[]'::jsonb; -- extra photos beyond image_url, shown as PDP gallery thumbnails
+alter table public.products add column if not exists key_benefits jsonb not null default '[]'::jsonb; -- array of short strings, e.g. "Wood-pressed, never heated"
+alter table public.products add column if not exists ingredients_info text; -- free text, e.g. "100% Cold-Pressed Coconut Oil. No additives."
+alter table public.products add column if not exists shipping_info text; -- optional admin note shown alongside the always-computed shipping facts (weight-based rate / free-shipping threshold)
+alter table public.products add column if not exists faq jsonb not null default '[]'::jsonb; -- array of {question, answer}, product-specific FAQ shown as an accordion
+
+-- =====================================================================
+-- Admin Phase 2: product identifiers, inventory tracking, named shipping
+-- classes. Added after products already existed in production — same
+-- IF NOT EXISTS backfill pattern as above.
+-- =====================================================================
+alter table public.products add column if not exists sku text; -- base-product SKU (variants already had their own sku column)
+alter table public.products add column if not exists barcode text; -- GTIN/UPC/EAN, optional, scanner-friendly
+-- Per-product override for the low-stock alert (Admin -> Reports). Leave
+-- null to use the store-wide default (site_content.store_settings.low_stock_threshold).
+alter table public.products add column if not exists low_stock_threshold integer;
+-- Units manually held back from the sellable count (e.g. set aside for an
+-- offline sale or a B2B order) — "available to sell" = stock - reserved_stock.
+-- NOTE: this is an admin-set number only in this phase, not wired into
+-- checkout — placing an online order does not auto-reserve/decrement stock
+-- yet (there's no stock decrement on order placement at all currently; see
+-- stock_adjustments below for the manual/audited alternative). Auto
+-- reserve-on-order and release-on-cancel belongs with the Admin Phase 4
+-- order-lifecycle/refund work, where "never silently change a paid total"
+-- already has to be handled carefully — bolting a partial version on here
+-- risked phantom stock loss from abandoned/failed online payments with no
+-- corresponding release path yet, so it's deliberately deferred rather than
+-- half-built.
+alter table public.products add column if not exists reserved_stock integer not null default 0;
+
+-- Named shipping classes ("Fragile - Glass", "Bulky", "Fast/Small Parcel"),
+-- so an admin can assign a shared shipping rule to a group of products
+-- instead of retyping the same flat_rate_paise on each product's own
+-- shipping_charge_paise override. A class with flat_rate_paise left null
+-- doesn't override anything — the product just falls through to its own
+-- shipping_charge_paise / weight-based calculation as before.
+create table if not exists public.shipping_classes (
+  id uuid primary key default gen_random_uuid(),
+  name text unique not null,
+  flat_rate_paise integer,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+alter table public.shipping_classes enable row level security;
+
+drop policy if exists "shipping_classes_public_read" on public.shipping_classes;
+create policy "shipping_classes_public_read" on public.shipping_classes
+  for select using (true);
+
+drop policy if exists "shipping_classes_admin_write" on public.shipping_classes;
+create policy "shipping_classes_admin_write" on public.shipping_classes
+  for all using (public.current_role() = 'admin') with check (public.current_role() = 'admin');
+
+alter table public.products add column if not exists shipping_class_id uuid references public.shipping_classes(id);
+
+-- Stock-adjustment ledger: one row per intentional stock change, with a
+-- required reason — restocking, damage/loss, manual correction, a customer
+-- return, etc. — plus who made it and the before/after count, so inventory
+-- history is always auditable instead of a bare number silently overwritten.
+-- Also written automatically (reason 'manual_edit') whenever the plain
+-- quick-edit stock field in Admin -> Products is changed directly, so every
+-- stock change is logged no matter which UI path was used.
+create table if not exists public.stock_adjustments (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  variant_id uuid,          -- not a hard FK (kept even if the variant is later deleted); null = adjustment was on the base product's own stock
+  variant_label text,       -- snapshot, e.g. "500ml", set when variant_id is set
+  delta integer not null,   -- positive = stock added, negative = stock removed
+  reason text not null,     -- 'received' | 'damaged' | 'correction' | 'return' | 'manual_edit' | 'other'
+  note text,
+  previous_stock integer not null,
+  new_stock integer not null,
+  adjusted_by text,         -- admin/staff email, for accountability
+  created_at timestamptz not null default now()
+);
+
+alter table public.stock_adjustments enable row level security;
+
+-- Internal ops data — admin/staff only, no public read.
+drop policy if exists "stock_adjustments_admin_all" on public.stock_adjustments;
+create policy "stock_adjustments_admin_all" on public.stock_adjustments
+  for all using (public.current_role() in ('admin', 'staff')) with check (public.current_role() in ('admin', 'staff'));
+
 -- ---------------------------------------------------------------------
 -- orders + order_items
 -- ---------------------------------------------------------------------
@@ -191,6 +301,84 @@ create table if not exists public.order_items (
   line_gst_paise integer not null default 0,
   line_shipping_paise integer not null default 0
 );
+
+-- Added for the CGST/SGST/IGST tax-calculation engine (see
+-- backend/lib/dataStore.js computeOrderPricing/priceOrderItems) — IF NOT
+-- EXISTS ALTERs, same backfill pattern used throughout this file.
+-- order_items: per-line HSN snapshot + the GST split actually applied.
+alter table public.order_items add column if not exists hsn_code text;
+alter table public.order_items add column if not exists cgst_paise integer not null default 0;
+alter table public.order_items add column if not exists sgst_paise integer not null default 0;
+alter table public.order_items add column if not exists igst_paise integer not null default 0;
+
+-- orders: the order-level GST split + the seller/customer state pair and
+-- intrastate/interstate classification it was computed from, plus a
+-- genuine breakdown of discount_paise (previously one lump sum covering
+-- coupon + Groove Points + referral discount together, with no way to
+-- tell how much of it came from which).
+alter table public.orders add column if not exists cgst_paise integer not null default 0;
+alter table public.orders add column if not exists sgst_paise integer not null default 0;
+alter table public.orders add column if not exists igst_paise integer not null default 0;
+alter table public.orders add column if not exists tax_type text; -- 'intrastate' | 'interstate' | 'none'
+alter table public.orders add column if not exists seller_state text;
+alter table public.orders add column if not exists customer_state text;
+alter table public.orders add column if not exists loyalty_discount_paise integer not null default 0;
+alter table public.orders add column if not exists loyalty_points_redeemed integer not null default 0;
+alter table public.orders add column if not exists referral_discount_paise integer not null default 0;
+
+-- =====================================================================
+-- Admin Phase 4: order timeline, refund/return/cancellation workflow.
+--
+-- Invariant: total_paise is NEVER mutated after an order is created (no
+-- route exists anywhere that PATCHes it — see backend/routes/orders.js).
+-- Refunds instead accumulate in their own running total, refunded_amount_paise,
+-- so "how much has actually been refunded" and "what was originally
+-- charged" are always two separate, individually-auditable numbers rather
+-- than one value silently edited in place.
+-- =====================================================================
+alter table public.orders add column if not exists refunded_amount_paise integer not null default 0;
+
+-- order_status_events: an append-only timeline of everything that happened
+-- to an order — status changes, tracking added, payment marked paid,
+-- refund requested/processed, etc. — so the admin Order Detail page can
+-- show a real history instead of just the order's current snapshot state.
+create table if not exists public.order_status_events (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid not null references public.orders(id) on delete cascade,
+  event_type text not null,   -- 'status_change' | 'tracking_added' | 'payment_marked_paid' | 'refund_requested' | 'refund_processed' | 'refund_rejected' | 'note'
+  from_value text,
+  to_value text,
+  note text,
+  actor text,                 -- admin/staff email, or 'system'/'customer' where relevant
+  created_at timestamptz not null default now()
+);
+alter table public.order_status_events enable row level security;
+drop policy if exists "order_status_events_admin_all" on public.order_status_events;
+create policy "order_status_events_admin_all" on public.order_status_events
+  for all using (public.current_role() in ('admin', 'staff')) with check (public.current_role() in ('admin', 'staff'));
+
+-- order_refunds: the refund/return/cancellation workflow itself. A refund
+-- starts 'requested' (or is recorded already-'processed' for a same-day
+-- admin action) and moves to 'processed' or 'rejected' — processing a
+-- refund increments orders.refunded_amount_paise by amount_paise; it never
+-- touches total_paise.
+create table if not exists public.order_refunds (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid not null references public.orders(id) on delete cascade,
+  type text not null default 'refund' check (type in ('refund','cancellation','return')),
+  status text not null default 'requested' check (status in ('requested','processed','rejected')),
+  amount_paise integer not null,
+  reason text not null,
+  note text,
+  requested_by text,
+  processed_by text,
+  created_at timestamptz not null default now(),
+  processed_at timestamptz
+);
+alter table public.order_refunds enable row level security;
+drop policy if exists "order_refunds_admin_all" on public.order_refunds;
+create policy "order_refunds_admin_all" on public.order_refunds
+  for all using (public.current_role() in ('admin', 'staff')) with check (public.current_role() in ('admin', 'staff'));
 
 -- ---------------------------------------------------------------------
 -- banners (homepage hero slides, festive-offer / promo cards, posters —
@@ -434,6 +622,10 @@ create table if not exists public.product_variants (
   created_at timestamptz not null default now()
 );
 
+-- Admin Phase 2: scanner-friendly barcode per variant (the base product
+-- already has sku/barcode as of the block above; variants already had sku).
+alter table public.product_variants add column if not exists barcode text;
+
 alter table public.customer_addresses enable row level security;
 alter table public.wishlist_items enable row level security;
 alter table public.reviews enable row level security;
@@ -488,6 +680,19 @@ create table if not exists public.shipping_rate_slabs (
   created_at timestamptz not null default now()
 );
 
+-- Shipping zones: optionally scope a rate slab to specific states, pincode
+-- prefixes, and/or an order-value range, on top of (or instead of) the
+-- weight range above — see backend/lib/dataStore.js computeShipping. Every
+-- column here is nullable/optional; a slab that only sets max_weight_grams
+-- (the original shape) still just works exactly as before.
+alter table public.shipping_rate_slabs add column if not exists zone_name text;
+alter table public.shipping_rate_slabs add column if not exists states jsonb; -- array of state names; null/empty = any state
+alter table public.shipping_rate_slabs add column if not exists pincode_prefixes jsonb; -- array of pincode-prefix strings; null/empty = any pincode
+alter table public.shipping_rate_slabs add column if not exists min_weight_grams integer;
+alter table public.shipping_rate_slabs add column if not exists min_order_paise integer;
+alter table public.shipping_rate_slabs add column if not exists max_order_paise integer;
+alter table public.shipping_rate_slabs add column if not exists is_active boolean not null default true;
+
 alter table public.shipping_rate_slabs enable row level security;
 
 drop policy if exists "shipping_rate_slabs_public_read" on public.shipping_rate_slabs;
@@ -524,10 +729,69 @@ drop policy if exists "coupons_admin_all" on public.coupons;
 create policy "coupons_admin_all" on public.coupons
   for all using (public.current_role() = 'admin') with check (public.current_role() = 'admin');
 
+-- Admin Phase 5: coupon restrictions — a start date (previously only an end
+-- date existed), a per-signed-in-customer usage cap (previously only the
+-- global times_used counter existed), and restricting a coupon to specific
+-- products/categories (arrays of ids, jsonb rather than a real array column
+-- so this matches the jsonb-array convention already used elsewhere in this
+-- file, e.g. products.gallery_images) — null/empty means "no restriction",
+-- the same as today's unrestricted behavior.
+alter table public.coupons add column if not exists starts_at timestamptz;
+alter table public.coupons add column if not exists per_customer_limit integer;
+alter table public.coupons add column if not exists product_ids jsonb;
+alter table public.coupons add column if not exists category_ids jsonb;
+
+-- coupon_redemptions: one row per successful coupon use by a signed-in
+-- customer — the only way to actually enforce per_customer_limit (the
+-- existing times_used column is a bare global counter with no per-customer
+-- breakdown). Guest checkouts have no user_id to attribute a redemption to,
+-- so per_customer_limit only ever applies to signed-in customers — the same
+-- scope every other per-customer feature in this app already has (Groove
+-- Points, referrals, saved addresses).
+create table if not exists public.coupon_redemptions (
+  id uuid primary key default gen_random_uuid(),
+  coupon_id uuid not null references public.coupons(id) on delete cascade,
+  user_id uuid references public.profiles(id),
+  order_id uuid references public.orders(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+alter table public.coupon_redemptions enable row level security;
+drop policy if exists "coupon_redemptions_admin_all" on public.coupon_redemptions;
+create policy "coupon_redemptions_admin_all" on public.coupon_redemptions
+  for all using (public.current_role() = 'admin') with check (public.current_role() = 'admin');
+
 -- Coupon applied to an order (if any) — kept on the order itself so the
 -- invoice and admin order view can show what discount was used.
 alter table public.orders add column if not exists coupon_code text;
 alter table public.orders add column if not exists discount_paise integer not null default 0;
+
+-- =====================================================================
+-- Admin Phase 6: audit log — a single cross-domain "who did what, when"
+-- trail for admin/staff write actions. Several domains already have their
+-- own purpose-built history (stock_adjustments for inventory,
+-- order_status_events for the order timeline, profiles.deactivated_at/
+-- deactivated_reason for account status) — this table is NOT a duplicate of
+-- those; it's the catch-all for every other admin write action Phases 2-5
+-- added that had zero history anywhere until now (product/variant/category/
+-- coupon/shipping-rate/shipping-class create/update/delete), plus a
+-- lightweight cross-reference entry for the actions that DO already have
+-- their own detailed trail, so "everything this admin did" is answerable
+-- from one place without joining five different tables.
+-- =====================================================================
+create table if not exists public.audit_log (
+  id uuid primary key default gen_random_uuid(),
+  actor text,              -- admin/staff email; null if the system did it (rare)
+  actor_role text,         -- 'admin' | 'staff' at the time of the action
+  action text not null,    -- e.g. 'product.update', 'coupon.delete', 'customer.status_change'
+  entity_type text,        -- e.g. 'product', 'coupon', 'category', 'order'
+  entity_id text,
+  summary text not null,   -- human-readable one-line description
+  created_at timestamptz not null default now()
+);
+alter table public.audit_log enable row level security;
+drop policy if exists "audit_log_admin_all" on public.audit_log;
+create policy "audit_log_admin_all" on public.audit_log
+  for all using (public.current_role() in ('admin', 'staff')) with check (public.current_role() in ('admin', 'staff'));
 
 -- =====================================================================
 -- Groove Points loyalty ledger — one row per earn/redeem event. A
@@ -545,6 +809,11 @@ create table if not exists public.loyalty_ledger (
   reason text not null,                      -- 'order_earned' | 'order_redeemed' | 'manual_adjustment'
   created_at timestamptz not null default now()
 );
+
+-- Free-text note for manual adjustments (e.g. "goodwill credit — damaged
+-- item", "correcting duplicate order_earned entry") — optional, blank for
+-- the order_earned/order_redeemed rows written automatically.
+alter table public.loyalty_ledger add column if not exists note text;
 
 alter table public.loyalty_ledger enable row level security;
 
@@ -633,14 +902,9 @@ insert into public.site_content (key, value) values
   }'::jsonb),
   ('homepage_story', '{
     "eyebrow": "Our Story",
-    "title_line1": "Rooted in soil,", "title_line2": "pressed by hand.",
-    "body": "We partner with named farms and press each batch the slow way — wood-ghani, stone-turned, no heat added. It takes longer. It tastes like it should.",
-    "milestones": [
-      {"year": "2018", "text": "Started blending botanical oils in a farmhouse kitchen."},
-      {"year": "2020", "text": "Opened a countryside pressing studio with three artisans."},
-      {"year": "2022", "text": "Earned organic & cruelty-free certification for our core range."},
-      {"year": "2024", "text": "Launched a returnable-glass refill program with 40 retail partners."}
-    ]
+    "title_line1": "Rooted in soil,", "title_line2": "made the slower way.",
+    "body": "We believe good oil should not be rushed — pressed in small batches, filtered gently, and packaged to be reused rather than thrown away.",
+    "milestones": []
   }'::jsonb),
   ('homepage_feature_strip', '{
     "items": [
@@ -661,3 +925,24 @@ insert into public.site_content (key, value) values
     ]
   }'::jsonb)
 on conflict (key) do nothing;
+
+-- Corrective fix, 2026-09-09: the original 'homepage_story' seed above
+-- contained specific claims (a partner-farm/formula count, a named
+-- certification, specific years and headcounts) that were placeholder
+-- text, never actually verified — confirmed with the store owner and
+-- removed. `on conflict do nothing` means the INSERT above won't touch a
+-- row that already exists (e.g. from an earlier run of this file before
+-- this fix), so this UPDATE corrects it directly. It only fires if the
+-- stored value still contains the old placeholder certification text —
+-- so if this content was ever hand-edited from Admin since, that edit is
+-- left alone rather than silently overwritten.
+update public.site_content
+set value = '{
+    "eyebrow": "Our Story",
+    "title_line1": "Rooted in soil,", "title_line2": "made the slower way.",
+    "body": "We believe good oil should not be rushed — pressed in small batches, filtered gently, and packaged to be reused rather than thrown away.",
+    "milestones": []
+  }'::jsonb,
+  updated_at = now()
+where key = 'homepage_story'
+  and value::text like '%cruelty-free certification%';

@@ -14,6 +14,14 @@
   --sand-300: #e7dcc4;
   --gold-500: #c9a227;
   --gold-600: #a9841c;
+  /* Text-safe gold: --gold-600 is only 3.25:1 against --sand-100, below
+     WCAG AA's 4.5:1 for small text (fails on .eyebrow labels and product
+     star ratings, which sit on light backgrounds site-wide). --gold-700
+     is 5.61:1 — same family, comfortably passes, still reads as gold/brass
+     rather than brown. Use this (not --gold-600) for gold text on light
+     backgrounds; --gold-500/--gold-600 remain fine for gold text on the
+     dark --moss-900 sections (6.62:1 / 4.58:1 respectively). */
+  --gold-700: #7a5f14;
   --clay-500: #b5551d;
   --clay-600: #934415;
   --cream: #fbf6ec;
@@ -79,18 +87,45 @@ a { color: inherit; text-decoration: none; }
   text-transform: uppercase;
   letter-spacing: 0.14em;
   font-size: 0.72rem;
-  color: var(--gold-600);
+  color: var(--gold-700);
   margin-bottom: 0.75em;
   display: inline-block;
 }
 .section { padding: 96px 0; }
 .section--tight { padding: 56px 0; }
 .section--dark { background: var(--moss-900); color: var(--cream); }
-.section--dark h1, .section--dark h2, .section--dark h3 { color: var(--cream); }
+/* h1-h4 are colored directly (not inherited) by the base rule above, so
+   each needs an explicit re-override here — h4 was missing until now,
+   which is the same invisible-dark-on-dark-text bug class the codebase
+   had already patched once elsewhere (per .page-header's own h1-h4
+   override below). --gold-700 above is a light-background-only color:
+   dark sections need the lighter --gold-500 for their eyebrow labels to
+   stay readable against --moss-900 (6.62:1 vs. --gold-700's 2.65:1). */
+.section--dark h1, .section--dark h2, .section--dark h3, .section--dark h4 { color: var(--cream); }
+.section--dark .eyebrow { color: var(--gold-500); }
 .center { text-align: center; }
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; overflow: hidden;
   clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+/* Keyboard-accessible skip-to-content link, injected by ensureSkipLink() in
+   partials.js. Hidden off-screen until it receives keyboard focus. */
+.skip-link {
+  position: absolute;
+  top: -48px;
+  left: 8px;
+  z-index: 1000;
+  background: var(--moss-900);
+  color: var(--cream);
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.15s ease;
+}
+.skip-link:focus {
+  top: 8px;
 }
 
 /* Buttons */
@@ -119,7 +154,12 @@ a { color: inherit; text-decoration: none; }
 .btn--outline:hover { background: rgba(255,255,255,0.08); }
 .btn--dark { background: var(--moss-900); color: var(--cream); }
 .btn--dark:hover { background: var(--moss-800); }
-.btn--sm { padding: 9px 18px; font-size: 0.85rem; }
+/* min-height (not just padding) so short-label small buttons still clear a
+   44px touch target on mobile, per WCAG 2.5.5/2.5.8 target-size guidance. */
+.btn--sm { padding: 9px 18px; font-size: 0.85rem; min-height: 40px; }
+@media (max-width: 640px) {
+  .btn--sm { min-height: 44px; }
+}
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Product-detail size/color variant pills */
@@ -158,7 +198,14 @@ a { color: inherit; text-decoration: none; }
 }
 .nav__links a:hover::after { right: 0; }
 .nav__icons { display: flex; align-items: center; gap: 18px; }
-.nav__icon-btn { position: relative; display: inline-flex; background: none; border: none; color: inherit; cursor: pointer; padding: 4px; }
+/* 4px padding around a ~21px icon left a ~29px hit area — well under the
+   44px minimum touch target (WCAG 2.5.5/2.5.8). align-items/justify-content
+   center keeps the icon itself visually unchanged inside the larger box. */
+.nav__icon-btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; color: inherit; cursor: pointer;
+  padding: 4px; min-width: 44px; min-height: 44px;
+}
 .nav__cart-count {
   position: absolute; top: -4px; right: -6px;
   background: var(--clay-500); color: var(--cream);
@@ -484,67 +531,6 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* =====================================================================
-   Process 3D — "The Journey of the Oil" scroll-driven WebGL scene.
-   Progressive enhancement: the plain .process rows above are the default
-   fallback markup (always in the DOM), used as-is for no-JS, no-WebGL,
-   prefers-reduced-motion, and narrow/mobile viewports. process3d.js
-   decides which one to show — see that file for the full gating logic.
-   ===================================================================== */
-.process3d { position: relative; background: var(--moss-900); overflow: clip; }
-/* Breaks out of .section's own top/bottom padding so the pinned canvas can
-   go full-bleed; the fallback content below keeps the section's normal
-   padding since it's a sibling, not a child, of the scroller. */
-.process3d__scroller { display: none; position: relative; height: 260vh; margin: -96px 0; }
-.process3d__viewport {
-  position: sticky; top: 0; height: 100vh; overflow: hidden;
-  display: flex; align-items: center;
-}
-.process3d__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.process3d__scrim {
-  position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(90deg, rgba(27,36,22,0.55) 0%, rgba(27,36,22,0.15) 45%, rgba(27,36,22,0.05) 100%);
-}
-.process3d__stage-copy { position: relative; z-index: 2; width: 100%; max-width: 460px; margin-left: 8%; padding: 0 24px; }
-.process3d__stage {
-  position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center;
-  opacity: 0; transform: translateY(18px); transition: opacity 0.6s ease, transform 0.6s ease; pointer-events: none;
-}
-.process3d__stage.is-active { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.process3d__stage-num { color: var(--gold-500); font-size: 0.85rem; letter-spacing: 0.1em; }
-.process3d__stage h3 { font-size: clamp(1.9rem, 3.6vw, 2.8rem); color: var(--cream); margin: 10px 0 12px; }
-.process3d__stage p { color: var(--sand-200); font-size: 1.02rem; opacity: 0.85; max-width: 400px; margin: 0; }
-.process3d__lockup {
-  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 16px; text-align: center; opacity: 0; pointer-events: none; transition: opacity 0.7s ease;
-  /* Soft vignette behind the text so it stays legible over the busy wide
-     shot of the whole diorama, regardless of what's directly behind it. */
-  background: radial-gradient(ellipse 46% 60% at 50% 50%, rgba(27,36,22,0.75) 0%, rgba(27,36,22,0.35) 55%, rgba(27,36,22,0) 80%);
-}
-.process3d__lockup.is-active { opacity: 1; pointer-events: auto; }
-.process3d__lockup-line { font-size: clamp(1.6rem, 4vw, 2.9rem); color: var(--cream); line-height: 1.15; }
-.process3d__lockup .eyebrow { color: var(--gold-500); }
-.process3d__progress {
-  position: absolute; right: 28px; top: 50%; transform: translateY(-50%); z-index: 2;
-  display: flex; flex-direction: column; gap: 10px;
-}
-.process3d__progress-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(251,246,236,0.3); transition: background 0.3s ease, transform 0.3s ease; }
-.process3d__progress-dot.is-active { background: var(--gold-500); transform: scale(1.4); }
-.process3d__tooltip {
-  position: absolute; z-index: 3; transform: translate(-50%, -130%);
-  background: rgba(27,36,22,0.92); border: 1px solid rgba(201,162,39,0.35); color: var(--cream);
-  font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.03em;
-  padding: 6px 12px; border-radius: 6px; white-space: nowrap; pointer-events: none;
-  opacity: 0; transition: opacity 0.2s ease;
-}
-.process3d__tooltip.is-visible { opacity: 1; }
-@media (max-width: 900px) {
-  .process3d__tooltip { display: none; }
-}
-@media (max-width: 720px) {
-  .process3d__progress { display: none; }
-}
-
-/* =====================================================================
    Process video — "The Journey of the Oil" as a real cinematic loop.
    Simpler than the .process3d experience above: the <video poster> frame
    is itself a finished, fully-composed shot (baked-in title, stage labels,
@@ -619,7 +605,7 @@ a { color: inherit; text-decoration: none; }
 .product-card__image--coming-soon { background: linear-gradient(160deg, var(--sand-300), var(--sand-200)); opacity: 0.8; }
 .product-card h3 { font-size: 1.1rem; margin-bottom: 2px; }
 .product-card__desc { font-size: 0.85rem; color: var(--moss-700); margin-bottom: 12px; }
-.product-card__rating { font-family: var(--font-mono); font-size: 0.75rem; color: var(--gold-600); margin-bottom: 10px; }
+.product-card__rating { font-family: var(--font-mono); font-size: 0.75rem; color: var(--gold-700); margin-bottom: 10px; }
 .product-card__footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .product-card__price { font-family: var(--font-mono); font-size: 1.05rem; font-weight: 600; }
 .product-card__price del { opacity: 0.5; font-weight: 400; margin-right: 6px; }
@@ -675,6 +661,16 @@ a { color: inherit; text-decoration: none; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 640px) { .form-row { grid-template-columns: 1fr; } }
 .form-error { color: var(--clay-600); font-size: 0.85rem; margin-top: 6px; }
+
+/* About page stat strip. Was a hardcoded inline
+   grid-template-columns:repeat(3,1fr) with no paired media query — the one
+   place on the site a multi-column layout couldn't respond, so it
+   genuinely overflowed on a ~375px phone rather than just looking cramped. */
+.about-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; text-align: center; }
+.about-stats__value { font-family: var(--font-mono); font-size: 2rem; font-weight: 700; margin: 0 0 0.3em; color: var(--moss-900); }
+@media (max-width: 640px) {
+  .about-stats { grid-template-columns: 1fr; gap: 16px; }
+}
 .form-success { color: var(--moss-700); background: var(--sand-200); padding: 12px 16px; border-radius: var(--radius-sm); font-size: 0.9rem; }
 .banner-note {
   background: var(--sand-200); border: 1px solid var(--sand-300); border-radius: var(--radius-sm);
@@ -817,3 +813,147 @@ tr.banner-row.drag-over-bottom td { box-shadow: inset 0 -2px 0 var(--gold-500); 
 @media (max-width: 640px) {
   .banner-toolbar { flex-direction: column; align-items: stretch; }
 }
+
+/* =====================================================================
+   Phase 1b — customer-website completion pass (PDP rebuild, sticky mobile
+   CTAs, shop filter bar, newsletter, order-confirmation summary, address
+   picker, FAQ accordion, search panel, nav Deals demotion).
+   ===================================================================== */
+
+/* ---- PDP: gallery ---- */
+.pdp-gallery { display: flex; flex-direction: column; gap: 12px; }
+.pdp-gallery__main {
+  aspect-ratio: 1/1; border-radius: var(--radius-lg); overflow: hidden;
+  background: var(--moss-800); position: relative;
+}
+.pdp-gallery__main img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: zoom-in; }
+.pdp-gallery__thumbs { display: flex; gap: 10px; flex-wrap: wrap; }
+.pdp-gallery__thumb {
+  width: 64px; height: 64px; border-radius: var(--radius-sm); overflow: hidden;
+  border: 2px solid transparent; cursor: pointer; padding: 0; background: var(--moss-800);
+}
+.pdp-gallery__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pdp-gallery__thumb.active { border-color: var(--gold-500); }
+.pdp-lightbox {
+  position: fixed; inset: 0; background: rgba(27, 36, 22, 0.92); display: flex;
+  align-items: center; justify-content: center; z-index: 200; padding: 24px;
+}
+.pdp-lightbox img { max-width: 100%; max-height: 100%; border-radius: var(--radius-md); }
+.pdp-lightbox__close {
+  position: absolute; top: 20px; right: 24px; background: none; border: none;
+  color: var(--cream); font-size: 2rem; cursor: pointer; line-height: 1;
+}
+
+/* ---- PDP: benefits / ingredients / shipping / FAQ / related ---- */
+.pdp-section { margin-top: 48px; padding-top: 32px; border-top: 1px solid var(--sand-300); }
+.pdp-section h2 { font-size: 1.4rem; }
+.pdp-benefits { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; list-style: none; margin: 0; padding: 0; }
+.pdp-benefits li { display: flex; gap: 10px; align-items: flex-start; font-size: 0.95rem; }
+.pdp-benefits li::before { content: "✓"; color: var(--gold-700); font-weight: 700; flex-shrink: 0; }
+.pdp-shipinfo { display: flex; flex-direction: column; gap: 10px; font-size: 0.92rem; color: var(--moss-700); }
+.pdp-shipinfo__row { display: flex; gap: 10px; align-items: flex-start; }
+
+.pdp-faq { display: flex; flex-direction: column; border-top: 1px solid var(--sand-300); }
+.pdp-faq__item { border-bottom: 1px solid var(--sand-300); }
+.pdp-faq__q {
+  width: 100%; text-align: left; background: none; border: none; padding: 16px 4px;
+  font-family: var(--font-body); font-weight: 600; font-size: 0.98rem; display: flex;
+  justify-content: space-between; align-items: center; cursor: pointer; color: var(--moss-900);
+}
+.pdp-faq__q::after { content: "+"; font-size: 1.3rem; color: var(--gold-700); transition: transform 0.2s; }
+.pdp-faq__item[open] .pdp-faq__q::after { transform: rotate(45deg); }
+.pdp-faq__a { padding: 0 4px 16px; color: var(--moss-700); font-size: 0.92rem; }
+
+.pdp-related { margin-top: 64px; }
+
+/* ---- Sticky mobile CTA bar (cart / checkout / PDP) ---- */
+.sticky-cta { display: none; }
+@media (max-width: 760px) {
+  .sticky-cta {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 80;
+    background: var(--sand-100); border-top: 1px solid var(--sand-300);
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    align-items: center; gap: 12px; box-shadow: 0 -8px 24px rgba(27, 36, 22, 0.1);
+  }
+  .sticky-cta__price { font-family: var(--font-mono); font-weight: 700; font-size: 1.05rem; flex-shrink: 0; white-space: nowrap; }
+  .sticky-cta .btn { flex: 1; text-align: center; }
+  body.has-sticky-cta { padding-bottom: 78px; }
+}
+
+/* ---- Shop filter bar (replaces .dashboard-nav borrowed from admin) ---- */
+.filter-bar { display: flex; flex-direction: column; gap: 14px; margin-bottom: 28px; }
+.filter-bar__top { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 14px; }
+.filter-bar__chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.filter-chip {
+  font-family: var(--font-mono); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 8px 16px; border-radius: 999px; border: 1px solid var(--sand-300); background: white;
+  cursor: pointer; transition: all 0.15s; color: var(--moss-700);
+}
+.filter-chip:hover { border-color: var(--moss-700); }
+.filter-chip.active { background: var(--moss-900); color: var(--cream); border-color: var(--moss-900); }
+.filter-bar__meta { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+.filter-bar__results { font-size: 0.85rem; color: var(--moss-700); }
+.filter-bar__active { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.filter-tag { display: inline-flex; align-items: center; gap: 6px; background: var(--sand-200); border-radius: 999px; padding: 5px 6px 5px 12px; font-size: 0.78rem; }
+.filter-tag button { background: none; border: none; cursor: pointer; font-size: 0.9rem; line-height: 1; color: var(--moss-700); padding: 2px 6px; }
+
+/* ---- Newsletter section (was fully inline-styled) ---- */
+.newsletter { text-align: center; max-width: 520px; margin: 0 auto; }
+.newsletter form { display: flex; gap: 10px; margin-top: 20px; }
+.newsletter input[type="email"] {
+  flex: 1; min-height: 48px; padding: 0 16px; border-radius: 999px;
+  border: 1px solid var(--sand-300); font-family: var(--font-body); font-size: 0.95rem;
+}
+.newsletter .btn { border-radius: 999px; }
+@media (max-width: 520px) {
+  .newsletter form { flex-direction: column; }
+}
+
+/* ---- Order confirmation: itemized summary ---- */
+.confirm-items { margin: 20px 0; }
+.confirm-items .flex-between { padding: 8px 0; border-bottom: 1px solid var(--sand-300); font-size: 0.92rem; }
+
+/* ---- Checkout: saved-address picker ---- */
+.address-picker { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
+.address-card {
+  border: 1px solid var(--sand-300); border-radius: var(--radius-md); padding: 14px 16px;
+  cursor: pointer; font-size: 0.88rem; position: relative; background: white;
+}
+.address-card.selected { border-color: var(--gold-500); background: var(--sand-200); }
+.address-card strong { display: block; margin-bottom: 4px; }
+.address-card__label {
+  font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--gold-700); display: block; margin-bottom: 4px;
+}
+
+/* ---- FAQ page ---- */
+.faq-page { max-width: 760px; margin: 0 auto; }
+
+/* ---- Site search panel ---- */
+.search-panel {
+  position: fixed; inset: 0; background: rgba(27, 36, 22, 0.5); z-index: 150;
+  display: none; align-items: flex-start; justify-content: center; padding: 80px 20px;
+}
+.search-panel.open { display: flex; }
+.search-panel__box {
+  background: var(--sand-100); border-radius: var(--radius-lg); width: 100%; max-width: 560px;
+  padding: 24px; box-shadow: var(--shadow-soft); max-height: 70vh; display: flex; flex-direction: column;
+}
+.search-panel input {
+  width: 100%; min-height: 48px; padding: 0 16px; border-radius: var(--radius-md);
+  border: 1px solid var(--sand-300); font-size: 1rem; font-family: var(--font-body);
+}
+.search-panel__results { margin-top: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.search-result { display: flex; gap: 12px; align-items: center; padding: 8px; border-radius: var(--radius-sm); }
+.search-result:hover { background: var(--sand-200); }
+.search-result img, .search-result-noimg { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: var(--moss-800); flex-shrink: 0; display: inline-block; }
+.search-panel__close { align-self: flex-end; background: none; border: none; font-size: 1.4rem; cursor: pointer; color: var(--moss-700); }
+.search-panel__empty { color: var(--moss-700); font-size: 0.88rem; padding: 8px 4px; }
+
+/* ---- Nav: search icon button + demoted Deals pill ---- */
+.nav__deals-pill {
+  font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 5px 12px; border-radius: 999px; border: 1px solid var(--gold-600); color: var(--gold-700);
+  margin-right: 6px; white-space: nowrap;
+}
+.nav__deals-pill:hover { background: var(--gold-500); color: var(--moss-900); }

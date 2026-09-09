@@ -12,7 +12,7 @@
 
 <div id="nav-root"></div>
 
-<header class="page-header">
+<header class="page-header" id="main-content" tabindex="-1">
   <div class="container">
     <span class="breadcrumb">Shop</span>
     <h1>Our Oils</h1>
@@ -22,18 +22,24 @@
 
 <section class="section">
   <div class="container">
-    <div class="flex-between" style="margin-bottom:28px;">
-      <div class="dashboard-nav" id="category-filters">
-        <button class="active" data-filter="all">All</button>
+    <div class="filter-bar">
+      <div class="filter-bar__top">
+        <div class="filter-bar__chips" id="category-filters">
+          <button class="filter-chip active" data-filter="all">All</button>
+        </div>
+        <div class="form-field" style="margin:0;min-width:200px;">
+          <label class="visually-hidden" for="sort-select">Sort by</label>
+          <select id="sort-select">
+            <option value="featured">Sort: Featured</option>
+            <option value="price-asc">Price: Low to High</option>
+            <option value="price-desc">Price: High to Low</option>
+            <option value="rating">Top Rated</option>
+          </select>
+        </div>
       </div>
-      <div class="form-field" style="margin:0;min-width:200px;">
-        <label class="visually-hidden" for="sort-select">Sort by</label>
-        <select id="sort-select">
-          <option value="featured">Sort: Featured</option>
-          <option value="price-asc">Price: Low to High</option>
-          <option value="price-desc">Price: High to Low</option>
-          <option value="rating">Top Rated</option>
-        </select>
+      <div class="filter-bar__meta">
+        <span class="filter-bar__results" id="filter-results-count"></span>
+        <div class="filter-bar__active" id="filter-active-chips"></div>
       </div>
     </div>
     <div class="products-grid" id="shop-products">

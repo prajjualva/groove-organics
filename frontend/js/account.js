@@ -10,40 +10,50 @@ function requireCustomerOrRedirect() {
 async function renderOrdersTab() {
   const wrap = document.getElementById('account-tab-content');
   wrap.innerHTML = '<p>Loading your orders…</p>';
-  const { orders } = await api('/api/customer/orders');
+  try {
+    const { orders } = await api('/api/customer/orders');
 
-  if (!orders.length) {
-    wrap.innerHTML = `<div class="empty-state">No orders yet. <a href="/shop" style="text-decoration:underline;">Start shopping</a>.</div>`;
-    return;
-  }
+    if (!orders.length) {
+      wrap.innerHTML = `<div class="empty-state">No orders yet. <a href="/shop" style="text-decoration:underline;">Start shopping</a>.</div>`;
+      return;
+    }
 
-  wrap.innerHTML = orders
-    .map(
-      (o) => `
-    <div class="card" style="margin-bottom:16px;">
-      <div class="flex-between">
-        <div>
-          <strong class="mono">${o.order_number}</strong>
-          <div style="font-size:0.8rem;color:var(--moss-700);">${new Date(o.created_at).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' })}</div>
+    wrap.innerHTML = orders
+      .map(
+        (o) => `
+      <div class="card" style="margin-bottom:16px;">
+        <div class="flex-between">
+          <div>
+            <strong class="mono">${o.order_number}</strong>
+            <div style="font-size:0.8rem;color:var(--moss-700);">${new Date(o.created_at).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' })}</div>
+          </div>
+          <span class="status-pill status-${o.status}">${o.status}</span>
         </div>
-        <span class="status-pill status-${o.status}">${o.status}</span>
-      </div>
-      <div style="margin:12px 0;font-size:0.9rem;color:var(--moss-700);">
-        ${(o.order_items || []).map((i) => `${i.product_name} ×${i.quantity}`).join(', ')}
-      </div>
-      <div class="flex-between">
-        <span class="mono" style="font-weight:600;">${formatRupees(o.total_paise)}</span>
-        <a href="/api/orders/${o.id}/invoice" target="_blank" rel="noopener" class="btn btn--outline btn--sm">Invoice</a>
-      </div>
-    </div>`
-    )
-    .join('');
+        <div style="margin:12px 0;font-size:0.9rem;color:var(--moss-700);">
+          ${(o.order_items || []).map((i) => `${i.product_name} ×${i.quantity}`).join(', ')}
+        </div>
+        <div class="flex-between">
+          <span class="mono" style="font-weight:600;">${formatRupees(o.total_paise)}</span>
+          <button class="btn btn--outline btn--sm" onclick="openInvoicePdf('${o.id}')">Invoice</button>
+        </div>
+      </div>`
+      )
+      .join('');
+  } catch (err) {
+    wrap.innerHTML = `<div class="empty-state">${err.message || "Couldn't load your orders."}</div>`;
+  }
 }
 
 async function renderAddressesTab() {
   const wrap = document.getElementById('account-tab-content');
   wrap.innerHTML = '<p>Loading addresses…</p>';
-  const { addresses } = await api('/api/customer/addresses');
+  let addresses;
+  try {
+    ({ addresses } = await api('/api/customer/addresses'));
+  } catch (err) {
+    wrap.innerHTML = `<div class="empty-state">${err.message || "Couldn't load your addresses."}</div>`;
+    return;
+  }
 
   wrap.innerHTML = `
     <div class="card" style="margin-bottom:24px;">
@@ -64,7 +74,7 @@ async function renderAddressesTab() {
           <div class="form-field"><label for="a-state">State</label><input id="a-state" required /></div>
         </div>
         <button class="btn btn--primary" type="submit">Save Address</button>
-        <p class="form-error" id="add-address-error" style="display:none;"></p>
+        <p class="form-error" id="add-address-error" style="display:none;" aria-live="assertive"></p>
       </form>
     </div>
     <div id="addresses-list"></div>
@@ -90,8 +100,12 @@ async function renderAddressesTab() {
 
   list.querySelectorAll('[data-delete-address]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      await api(`/api/customer/addresses/${btn.getAttribute('data-delete-address')}`, { method: 'DELETE' });
-      renderAddressesTab();
+      try {
+        await api(`/api/customer/addresses/${btn.getAttribute('data-delete-address')}`, { method: 'DELETE' });
+        renderAddressesTab();
+      } catch (err) {
+        alert(err.message || "Couldn't remove that address.");
+      }
     });
   });
 
@@ -270,8 +284,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const user = requireCustomerOrRedirect();
   if (!user) return;
 
-  renderNav('');
-  renderFooter();
+  renderSiteChrome('');
   document.getElementById('account-heading').textContent = `Welcome back, ${user.full_name || user.email}`;
   document.getElementById('logout-btn').addEventListener('click', async () => {
     await api('/api/auth/logout', { method: 'POST' });
