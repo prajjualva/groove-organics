@@ -2,6 +2,7 @@ const express = require('express');
 const { supabase, supabaseAdmin, isConfigured } = require('../lib/supabase');
 const mock = require('../lib/mockStore');
 const email = require('../lib/email');
+const store = require('../lib/dataStore');
 
 const router = express.Router();
 
@@ -26,6 +27,10 @@ router.post('/register', async (req, res) => {
     });
     if (error) return res.status(400).json({ error: error.message });
     email.sendWelcomeEmail({ email: data.user.email, full_name: full_name || null }).catch((err) => console.error('sendWelcomeEmail failed:', err.message));
+    // handle_new_user() (db/schema.sql) already ran synchronously as part of
+    // the signUp above, so profiles.referred_by is set by now if referralCode
+    // resolved to a real account — notifyReferralSignup no-ops otherwise.
+    store.notifyReferralSignup(data.user.id, full_name || null).catch((err) => console.error('notifyReferralSignup failed:', err.message));
     if (!data.session) {
       // Supabase project has "confirm email" turned on — no session yet.
       return res.status(201).json({
@@ -43,6 +48,7 @@ router.post('/register', async (req, res) => {
   const user = mock.registerCustomer({ email, password, full_name, referralCode });
   if (!user) return res.status(409).json({ error: 'An account with that email already exists.' });
   email.sendWelcomeEmail({ email: user.email, full_name: user.full_name }).catch((err) => console.error('sendWelcomeEmail failed:', err.message));
+  store.notifyReferralSignup(user.id, user.full_name).catch((err) => console.error('notifyReferralSignup failed:', err.message));
   const token = mock.createSession(user);
   res.status(201).json({
     token,

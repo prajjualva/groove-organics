@@ -1376,12 +1376,16 @@ async function addLoyaltyEntry(entry) {
     row = { id: `loy_${Date.now()}_${Math.round(Math.random() * 1e6)}`, created_at: new Date().toISOString(), ...entry };
     mock.loyaltyLedger.push(row);
   }
-  // Email the customer for every CREDIT (order_earned, referral_bonus, or a
-  // positive manual_adjustment) — never for a debit (order_redeemed, or a
-  // negative manual_adjustment). Fire-and-forget: a notification failure
-  // must never roll back or block the points actually being recorded.
+  // Email the customer for every ledger entry that actually moves their
+  // balance — a CREDIT (order_earned, referral_bonus, or a positive
+  // manual_adjustment) gets the "you earned points" email, a DEBIT
+  // (order_redeemed, or a negative manual_adjustment) gets the "points
+  // used" email. Fire-and-forget: a notification failure must never roll
+  // back or block the points actually being recorded.
   if (row.points_delta > 0) {
     notifyPointsCredited(row).catch((err) => console.error('notifyPointsCredited failed:', err.message));
+  } else if (row.points_delta < 0) {
+    notifyPointsDebited(row).catch((err) => console.error('notifyPointsDebited failed:', err.message));
   }
   return row;
 }
@@ -1401,6 +1405,44 @@ async function notifyPointsCredited(entry) {
     toEmail: customer.email,
     customerName: customer.full_name,
     points: entry.points_delta,
+    reason: entry.reason,
+    note: entry.note || null,
+    newBalance,
+  });
+}
+
+// Refer-a-friend: notify the REFERRER the moment their friend's account is
+// created — this is the "they joined!" email, separate from the later
+// referral_bonus Groove Points email (notifyPointsCredited above) which only
+// fires once the friend actually pays for their first order. Called from
+// backend/routes/auth.js right after a successful registration, in both
+// live (Supabase) and demo mode; a no-op if this signup wasn't referred.
+async function notifyReferralSignup(newUserId, friendName) {
+  const profile = await getProfile(newUserId);
+  if (!profile || !profile.referred_by) return;
+  const customers = await listCustomers();
+  const referrer = customers.find((c) => c.id === profile.referred_by);
+  if (!referrer || !referrer.email) return;
+  await email.sendReferralSignupEmail({
+    toEmail: referrer.email,
+    referrerName: referrer.full_name,
+    friendName: friendName || null,
+  });
+}
+
+// Debit counterpart to notifyPointsCredited above — fired for every
+// negative loyalty_ledger entry (order_redeemed, or a negative
+// manual_adjustment).
+async function notifyPointsDebited(entry) {
+  if (!entry.user_id) return;
+  const customers = await listCustomers();
+  const customer = customers.find((c) => c.id === entry.user_id);
+  if (!customer || !customer.email) return;
+  const newBalance = await getLoyaltyBalance(entry.user_id);
+  await email.sendPointsDebitedEmail({
+    toEmail: customer.email,
+    customerName: customer.full_name,
+    points: Math.abs(entry.points_delta),
     reason: entry.reason,
     note: entry.note || null,
     newBalance,
@@ -2867,4 +2909,5 @@ module.exports = {
   awardReferralBonus,
   getReferralStats,
   getReferredFriendsDetail,
+  notifyReferralSignup,
 };

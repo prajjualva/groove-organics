@@ -144,6 +144,42 @@ async function sendPointsCreditedEmail({ toEmail, customerName, points, reason, 
   return sendEmail({ to: toEmail, subject: `You earned ${points} Groove Points`, html });
 }
 
+// Fired once, right when a referred friend's account is created — tells the
+// REFERRER their link actually worked. Distinct from sendPointsCreditedEmail
+// (reason: 'referral_bonus'), which fires later, only once the friend pays
+// for their first order — this one is the earlier "they joined!" moment.
+// See backend/lib/dataStore.js's notifyReferralSignup.
+async function sendReferralSignupEmail({ toEmail, referrerName, friendName }) {
+  const html = `
+    <h2>Your friend just joined Groove Organics!</h2>
+    <p>Hi ${referrerName || 'there'}, ${friendName || 'someone you invited'} signed up using your referral link.</p>
+    <p>Once they place their first order, you'll earn Groove Points as a referral bonus — we'll email you again then.</p>
+    <p>— Groove Organics</p>
+  `;
+  return sendEmail({ to: toEmail, subject: 'Your friend joined Groove Organics', html });
+}
+
+// Fired for every NEGATIVE loyalty_ledger entry (order_redeemed, or a
+// negative manual admin adjustment) — the debit counterpart to
+// sendPointsCreditedEmail above. See backend/lib/dataStore.js's
+// addLoyaltyEntry, the one place every ledger write in the app goes through.
+const LOYALTY_DEBIT_REASON_COPY = {
+  order_redeemed: 'redeemed at checkout for a discount on your order',
+};
+
+async function sendPointsDebitedEmail({ toEmail, customerName, points, reason, note, newBalance }) {
+  const reasonText = reason === 'manual_adjustment' && note
+    ? note
+    : (LOYALTY_DEBIT_REASON_COPY[reason] || 'deducted from your Groove Organics account');
+  const html = `
+    <h2>${points} Groove Points used</h2>
+    <p>Hi ${customerName || 'there'}, ${points} Groove Points were just ${reasonText}.</p>
+    <p><strong>New balance: ${newBalance} points</strong></p>
+    <p>— Groove Organics</p>
+  `;
+  return sendEmail({ to: toEmail, subject: `${points} Groove Points used`, html });
+}
+
 async function sendPasswordResetEmail(email, actionLink) {
   const html = `
     <h2>Reset your password</h2>
@@ -165,4 +201,6 @@ module.exports = {
   sendPasswordResetEmail,
   sendWelcomeEmail,
   sendPointsCreditedEmail,
+  sendPointsDebitedEmail,
+  sendReferralSignupEmail,
 };
