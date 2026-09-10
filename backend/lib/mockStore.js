@@ -299,6 +299,16 @@ const couponRedemptions = [];
 // audit_log table comment and dataStore.js's logAudit/listAuditLog.
 const auditLog = [];
 
+// Admin Phase 7 (Website CMS) — Media Library + Pages. In live mode these
+// back onto a real `media` table + Supabase Storage bucket and a `pages`
+// table (see db/schema.sql); in demo mode there's no real file storage, so
+// an "uploaded" file's own data: URL is stored directly as its `url` here —
+// same base64-in-memory approach every other image in demo mode already
+// uses, just centralized into a reusable library list instead of pasted
+// into one record.
+const media = [];
+const pages = [];
+
 // Demo coupon so the checkout flow has something to test with out of the box —
 // code matches the "20% off your first order" promo card seeded above.
 const coupons = [
@@ -500,6 +510,8 @@ module.exports = {
   orderRefunds,
   couponRedemptions,
   auditLog,
+  media,
+  pages,
   coupons,
   loyaltyLedger,
   demoUsers,

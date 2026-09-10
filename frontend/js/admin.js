@@ -2772,7 +2772,7 @@ async function renderAuditLogTab() {
       : '<tr><td colspan="4" style="text-align:center;color:var(--moss-700);">No audit entries in this range.</td></tr>';
 
     wrap.querySelector('#audit-body').innerHTML = `
-      <table class="admin-table">
+      <table class="data-table">
         <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
@@ -3432,6 +3432,458 @@ async function renderShippingRatesTab() {
   });
 }
 
+// =====================================================================
+// Admin Phase 7: Website CMS — Media Library, Pages, Homepage Builder,
+// Navigation editor.
+// =====================================================================
+
+// --- Media Library ---
+// A real, browsable, reusable file library (Supabase Storage-backed in live
+// mode — see db/schema.sql's "media" bucket; a data: URL held in-memory in
+// demo mode, same as every other image already works there). Distinct from
+// the one-off image uploads still used directly on Products/Categories/
+// Banners (those are unchanged) — this is a separate shared pool an admin
+// can browse, and future work can point other upload fields at.
+async function renderMediaLibraryTab() {
+  const wrap = document.getElementById('tab-content');
+  wrap.innerHTML = '<p>Loading media library…</p>';
+  const { media } = await api('/api/media');
+
+  wrap.innerHTML = `
+    <div class="card" style="margin-bottom:20px;">
+      <h3 class="mt-0">Upload a file</h3>
+      <p style="font-size:0.85rem;color:var(--moss-700);">Images work everywhere on this site. Once uploaded, copy a file's URL to use it anywhere that takes an image URL.</p>
+      <input type="file" id="media-upload-input" accept="image/*" />
+      <p class="form-error" id="media-upload-error" style="display:none;"></p>
+    </div>
+    <div id="media-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;"></div>
+  `;
+
+  function renderGrid() {
+    const grid = document.getElementById('media-grid');
+    grid.innerHTML = media.length
+      ? media
+          .map(
+            (m) => `
+        <div class="card" style="padding:12px;" data-media-id="${m.id}">
+          <div style="aspect-ratio:1;border-radius:8px;overflow:hidden;background:var(--sand-100);margin-bottom:8px;">
+            <img src="${m.url}" alt="${escapeAttr(m.alt_text || m.filename)}" style="width:100%;height:100%;object-fit:cover;display:block;" />
+          </div>
+          <p style="font-size:0.78rem;word-break:break-all;margin:0 0 6px;" class="mono">${escapeAttr(m.filename)}</p>
+          <input class="media-alt-input" data-media-alt="${m.id}" placeholder="Alt text (accessibility)" value="${escapeAttr(m.alt_text || '')}" style="margin-bottom:6px;font-size:0.8rem;" />
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn--outline btn--sm" data-copy-media="${m.id}">Copy URL</button>
+            <button class="btn btn--outline btn--sm" data-delete-media="${m.id}">Delete</button>
+          </div>
+        </div>`
+          )
+          .join('')
+      : '<p style="color:var(--moss-700);grid-column:1/-1;">Nothing uploaded yet — add your first file above.</p>';
+
+    grid.querySelectorAll('[data-copy-media]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const item = media.find((m) => m.id === btn.getAttribute('data-copy-media'));
+        if (!item) return;
+        try {
+          await navigator.clipboard.writeText(item.url);
+          btn.textContent = 'Copied!';
+          setTimeout(() => (btn.textContent = 'Copy URL'), 1500);
+        } catch {
+          prompt('Copy this URL:', item.url);
+        }
+      });
+    });
+    grid.querySelectorAll('[data-delete-media]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Delete this file from the Media Library? This does not remove it from anywhere it was already used (e.g. a product image already saved with this URL keeps working).')) return;
+        const id = btn.getAttribute('data-delete-media');
+        await api(`/api/media/${id}`, { method: 'DELETE' });
+        renderMediaLibraryTab();
+      });
+    });
+    grid.querySelectorAll('[data-media-alt]').forEach((input) => {
+      let saveTimer = null;
+      input.addEventListener('input', () => {
+        clearTimeout(saveTimer);
+        const id = input.getAttribute('data-media-alt');
+        saveTimer = setTimeout(async () => {
+          try {
+            await api(`/api/media/${id}`, { method: 'PATCH', body: { altText: input.value } });
+          } catch (err) {
+            alert(err.message || 'Could not save alt text.');
+          }
+        }, 600);
+      });
+    });
+  }
+  renderGrid();
+
+  document.getElementById('media-upload-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const errorEl = document.getElementById('media-upload-error');
+    errorEl.style.display = 'none';
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const { item } = await api('/api/media', { method: 'POST', body: { filename: file.name, dataUrl } });
+      media.unshift(item);
+      renderGrid();
+    } catch (err) {
+      errorEl.textContent = err.message || 'Upload failed — please try again.';
+      errorEl.style.display = 'block';
+    } finally {
+      e.target.value = '';
+    }
+  });
+}
+
+// --- Pages ---
+// Generic CMS pages, published at /p/:slug — distinct from the 4 fixed
+// legal pages (Legal Pages tab, unchanged) and from every other fixed page
+// on the site. An admin can add any number of these (e.g. "Our Process",
+// "Press", "Sustainability") with zero code changes.
+async function renderPagesTab() {
+  const wrap = document.getElementById('tab-content');
+  wrap.innerHTML = '<p>Loading pages…</p>';
+  const { pages } = await api('/api/pages');
+
+  wrap.innerHTML = `
+    <div class="card" style="margin-bottom:24px;">
+      <h3 class="mt-0">Add a page</h3>
+      <div class="form-row">
+        <div class="form-field"><label for="pg-title">Title</label><input id="pg-title" placeholder="e.g. Our Process" required /></div>
+        <div class="form-field"><label for="pg-slug">URL slug</label><input id="pg-slug" placeholder="e.g. our-process" required /></div>
+      </div>
+      <div class="form-field"><label for="pg-body">Body</label><textarea id="pg-body" rows="6" placeholder="Page content — separate paragraphs with a blank line."></textarea></div>
+      <div class="form-field"><label><input type="checkbox" id="pg-published" /> Publish immediately (leave unchecked to save as a draft)</label></div>
+      <button class="btn btn--primary" id="add-page-btn">Add Page</button>
+      <p class="form-error" id="add-page-error" style="display:none;"></p>
+    </div>
+    <div class="card">
+      <table class="data-table">
+        <thead><tr><th>Title</th><th>URL</th><th>Status</th><th></th></tr></thead>
+        <tbody id="pages-tbody"></tbody>
+      </table>
+    </div>
+  `;
+
+  document.getElementById('pg-title').addEventListener('input', (e) => {
+    const slugField = document.getElementById('pg-slug');
+    if (!slugField.dataset.touched) {
+      slugField.value = e.target.value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    }
+  });
+  document.getElementById('pg-slug').addEventListener('input', (e) => (e.target.dataset.touched = '1'));
+
+  const tbody = document.getElementById('pages-tbody');
+  function renderRows() {
+    tbody.innerHTML = pages.length
+      ? pages
+          .map(
+            (p) => `<tr data-id="${p.id}">
+        <td>${escapeAttr(p.title)}</td>
+        <td class="mono">/p/${escapeAttr(p.slug)}</td>
+        <td><span class="status-pill status-${p.status === 'published' ? 'delivered' : 'draft'}">${p.status}</span></td>
+        <td style="white-space:nowrap;">
+          <button class="btn btn--outline btn--sm" data-toggle-page-detail="${p.id}">Details</button>
+          <button class="btn btn--outline btn--sm" data-delete-page="${p.id}">Delete</button>
+        </td>
+      </tr>
+      <tr class="variants-row" data-page-detail-for="${p.id}" style="display:none;">
+        <td colspan="4"><div class="variants-panel" data-page-detail-panel="${p.id}"></div></td>
+      </tr>`
+          )
+          .join('')
+      : '<tr><td colspan="4" style="text-align:center;color:var(--moss-700);">No pages yet — add one above.</td></tr>';
+
+    tbody.querySelectorAll('[data-delete-page]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Delete this page? Its URL will stop working immediately.')) return;
+        await api(`/api/pages/${btn.getAttribute('data-delete-page')}`, { method: 'DELETE' });
+        renderPagesTab();
+      });
+    });
+    tbody.querySelectorAll('[data-toggle-page-detail]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-toggle-page-detail');
+        const row = tbody.querySelector(`[data-page-detail-for="${id}"]`);
+        const isHidden = row.style.display === 'none';
+        row.style.display = isHidden ? '' : 'none';
+        btn.textContent = isHidden ? 'Hide' : 'Details';
+        if (isHidden) renderPageDetailPanel(id, pages.find((p) => p.id === id));
+      });
+    });
+  }
+  renderRows();
+
+  document.getElementById('add-page-btn').addEventListener('click', async () => {
+    const errorEl = document.getElementById('add-page-error');
+    errorEl.style.display = 'none';
+    try {
+      const { page } = await api('/api/pages', {
+        method: 'POST',
+        body: {
+          title: document.getElementById('pg-title').value.trim(),
+          slug: document.getElementById('pg-slug').value.trim(),
+          body: document.getElementById('pg-body').value,
+          status: document.getElementById('pg-published').checked ? 'published' : 'draft',
+        },
+      });
+      pages.unshift(page);
+      renderRows();
+      document.getElementById('pg-title').value = '';
+      document.getElementById('pg-slug').value = '';
+      document.getElementById('pg-slug').dataset.touched = '';
+      document.getElementById('pg-body').value = '';
+      document.getElementById('pg-published').checked = false;
+    } catch (err) {
+      errorEl.textContent = err.message || 'Could not create that page.';
+      errorEl.style.display = 'block';
+    }
+  });
+}
+
+async function renderPageDetailPanel(pageId, page) {
+  const panel = document.querySelector(`[data-page-detail-panel="${pageId}"]`);
+  panel.innerHTML = `
+    <div class="form-row">
+      <div class="form-field"><label>Title</label><input id="pgd-title-${pageId}" value="${escapeAttr(page.title)}" /></div>
+      <div class="form-field"><label>URL slug</label><input id="pgd-slug-${pageId}" value="${escapeAttr(page.slug)}" /></div>
+    </div>
+    <div class="form-field"><label>Body</label><textarea id="pgd-body-${pageId}" rows="10">${page.body || ''}</textarea></div>
+    <div class="form-row">
+      <div class="form-field"><label>SEO title (optional)</label><input id="pgd-seo-title-${pageId}" value="${escapeAttr(page.seo_title || '')}" /></div>
+      <div class="form-field"><label>SEO meta description (optional)</label><input id="pgd-seo-desc-${pageId}" value="${escapeAttr(page.seo_meta_description || '')}" /></div>
+    </div>
+    <div class="form-field"><label><input type="checkbox" id="pgd-published-${pageId}" ${page.status === 'published' ? 'checked' : ''} /> Published (visible at /p/${escapeAttr(page.slug)})</label></div>
+    <button class="btn btn--primary btn--sm" data-save-page="${pageId}">Save Changes</button>
+    <span class="form-error" data-page-saved="${pageId}" style="display:none;color:var(--moss-700);">Saved.</span>
+    <p class="form-error" data-page-error="${pageId}" style="display:none;"></p>
+  `;
+  panel.querySelector(`[data-save-page="${pageId}"]`).addEventListener('click', async () => {
+    const errorEl = panel.querySelector(`[data-page-error="${pageId}"]`);
+    errorEl.style.display = 'none';
+    try {
+      await api(`/api/pages/${pageId}`, {
+        method: 'PATCH',
+        body: {
+          title: document.getElementById(`pgd-title-${pageId}`).value.trim(),
+          slug: document.getElementById(`pgd-slug-${pageId}`).value.trim(),
+          body: document.getElementById(`pgd-body-${pageId}`).value,
+          seoTitle: document.getElementById(`pgd-seo-title-${pageId}`).value.trim() || null,
+          seoMetaDescription: document.getElementById(`pgd-seo-desc-${pageId}`).value.trim() || null,
+          status: document.getElementById(`pgd-published-${pageId}`).checked ? 'published' : 'draft',
+        },
+      });
+      renderPagesTab();
+    } catch (err) {
+      errorEl.textContent = err.message || 'Could not save that page.';
+      errorEl.style.display = 'block';
+    }
+  });
+}
+
+// --- Homepage Builder ---
+// Reorders/shows/hides the homepage sections below the hero — see
+// frontend/js/home-content.js's applyHomepageLayout() for how this is
+// applied on the live page. Deliberately reorder/show-hide only (up/down
+// arrows, matching the same reorder control already used on Categories,
+// rather than a new drag-and-drop library) — it never touches a section's
+// own design or content, those stay exactly as built.
+async function renderHomepageBuilderTab() {
+  const wrap = document.getElementById('tab-content');
+  wrap.innerHTML = '<p>Loading…</p>';
+  const { content } = await api('/api/content', { auth: false });
+  const defaultSections = [
+    { key: 'feature_strip', label: 'Feature strip (4 icons)', visible: true },
+    { key: 'promo', label: 'Offers & Highlights (promo banners)', visible: true },
+    { key: 'philosophy', label: 'Our Philosophy', visible: true },
+    { key: 'process_video', label: 'The Journey of the Oil (process video)', visible: true },
+    { key: 'products', label: 'Our Oils (product grid)', visible: true },
+    { key: 'newsletter', label: 'Newsletter signup', visible: true },
+  ];
+  let sections = content.homepage_layout && Array.isArray(content.homepage_layout.sections) && content.homepage_layout.sections.length ? content.homepage_layout.sections : defaultSections;
+
+  wrap.innerHTML = `
+    <div class="card">
+      <p style="font-size:0.85rem;color:var(--moss-700);margin-top:0;">Controls the order and visibility of the homepage sections below the hero (the hero itself always stays first). Use the arrows to reorder; uncheck a section to hide it entirely.</p>
+      <table class="data-table">
+        <thead><tr><th>Section</th><th>Visible</th><th></th></tr></thead>
+        <tbody id="homepage-layout-tbody"></tbody>
+      </table>
+      <button class="btn btn--primary" id="homepage-layout-save" style="margin-top:16px;">Save Layout</button>
+      <span class="form-error" id="homepage-layout-saved" style="display:none;color:var(--moss-700);">Saved — refresh the homepage to see it live.</span>
+    </div>
+  `;
+
+  function renderRows() {
+    const tbody = document.getElementById('homepage-layout-tbody');
+    tbody.innerHTML = sections
+      .map(
+        (s, i) => `<tr>
+        <td>${escapeAttr(s.label || s.key)}</td>
+        <td><input type="checkbox" data-layout-visible="${s.key}" ${s.visible !== false ? 'checked' : ''} /></td>
+        <td style="white-space:nowrap;">
+          <button class="btn btn--outline btn--sm" data-layout-move="${s.key}" data-direction="up" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button>
+          <button class="btn btn--outline btn--sm" data-layout-move="${s.key}" data-direction="down" ${i === sections.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
+        </td>
+      </tr>`
+      )
+      .join('');
+
+    tbody.querySelectorAll('[data-layout-move]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const key = btn.getAttribute('data-layout-move');
+        const dir = btn.getAttribute('data-direction');
+        const idx = sections.findIndex((s) => s.key === key);
+        const swapWith = dir === 'up' ? idx - 1 : idx + 1;
+        if (swapWith < 0 || swapWith >= sections.length) return;
+        [sections[idx], sections[swapWith]] = [sections[swapWith], sections[idx]];
+        renderRows();
+      });
+    });
+    tbody.querySelectorAll('[data-layout-visible]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const s = sections.find((x) => x.key === input.getAttribute('data-layout-visible'));
+        if (s) s.visible = input.checked;
+      });
+    });
+  }
+  renderRows();
+
+  document.getElementById('homepage-layout-save').addEventListener('click', async () => {
+    await api('/api/content/homepage_layout', { method: 'PATCH', body: { sections } });
+    const saved = document.getElementById('homepage-layout-saved');
+    saved.style.display = 'inline';
+    setTimeout(() => (saved.style.display = 'none'), 2500);
+  });
+}
+
+// --- Navigation editor ---
+// Header link set (Home + icon cluster stay fixed — see the comment in
+// frontend/js/partials.js) and the two admin-editable footer columns (Shop,
+// Company — the brand blurb and newsletter signup column stay fixed since
+// they carry real functionality, not just links).
+async function renderNavigationTab() {
+  const wrap = document.getElementById('tab-content');
+  wrap.innerHTML = '<p>Loading…</p>';
+  const { content } = await api('/api/content', { auth: false });
+  const defaults = {
+    header: [
+      { label: 'Shop', href: '/shop' },
+      { label: 'Our Story', href: '/about' },
+      { label: 'Contact', href: '/contact' },
+    ],
+    shop: [
+      { label: 'All Oils', href: '/shop' },
+      { label: 'Deals', href: '/deals' },
+      { label: 'Coming Soon', href: '/shop' },
+    ],
+    company: [
+      { label: 'Our Story', href: '/about' },
+      { label: 'Contact', href: '/contact' },
+      { label: 'FAQ', href: '/faq' },
+      { label: 'Terms', href: '/terms' },
+      { label: 'Privacy', href: '/privacy' },
+      { label: 'Refunds', href: '/refund-policy' },
+      { label: 'Shipping', href: '/shipping-policy' },
+    ],
+  };
+  let headerLinks = (content.nav_header && content.nav_header.links && content.nav_header.links.length ? content.nav_header.links : defaults.header).map((l) => ({ ...l }));
+  let footerShop = (content.nav_footer && content.nav_footer.shop && content.nav_footer.shop.length ? content.nav_footer.shop : defaults.shop).map((l) => ({ ...l }));
+  let footerCompany = (content.nav_footer && content.nav_footer.company && content.nav_footer.company.length ? content.nav_footer.company : defaults.company).map((l) => ({ ...l }));
+
+  wrap.innerHTML = `
+    <div class="card" style="margin-bottom:20px;">
+      <h3 class="mt-0">Header navigation</h3>
+      <p style="font-size:0.85rem;color:var(--moss-700);">"Home" and the search/wishlist/account/cart icons and the "Deals" pill are fixed — these are the other links shown in the main menu.</p>
+      <table class="data-table"><thead><tr><th>Label</th><th>Link</th><th></th></tr></thead><tbody id="nav-header-tbody"></tbody></table>
+      <button class="btn btn--outline btn--sm" id="nav-header-add" style="margin-top:12px;">+ Add link</button>
+    </div>
+    <div class="card" style="margin-bottom:20px;">
+      <h3 class="mt-0">Footer — "Shop" column</h3>
+      <table class="data-table"><thead><tr><th>Label</th><th>Link</th><th></th></tr></thead><tbody id="nav-shop-tbody"></tbody></table>
+      <button class="btn btn--outline btn--sm" id="nav-shop-add" style="margin-top:12px;">+ Add link</button>
+    </div>
+    <div class="card" style="margin-bottom:20px;">
+      <h3 class="mt-0">Footer — "Company" column</h3>
+      <table class="data-table"><thead><tr><th>Label</th><th>Link</th><th></th></tr></thead><tbody id="nav-company-tbody"></tbody></table>
+      <button class="btn btn--outline btn--sm" id="nav-company-add" style="margin-top:12px;">+ Add link</button>
+    </div>
+    <button class="btn btn--primary" id="nav-save">Save Navigation</button>
+    <span class="form-error" id="nav-saved" style="display:none;color:var(--moss-700);">Saved — refresh any page to see it live.</span>
+  `;
+
+  function renderLinkTable(tbodyId, list) {
+    const tbody = document.getElementById(tbodyId);
+    tbody.innerHTML = list
+      .map(
+        (l, i) => `<tr>
+        <td><input data-nav-label="${i}" value="${escapeAttr(l.label)}" style="min-width:120px;" /></td>
+        <td><input data-nav-href="${i}" value="${escapeAttr(l.href)}" style="min-width:160px;" /></td>
+        <td style="white-space:nowrap;">
+          <button class="btn btn--outline btn--sm" data-nav-move="${i}" data-direction="up" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button>
+          <button class="btn btn--outline btn--sm" data-nav-move="${i}" data-direction="down" ${i === list.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
+          <button class="btn btn--outline btn--sm" data-nav-remove="${i}" title="Remove">×</button>
+        </td>
+      </tr>`
+      )
+      .join('');
+
+    tbody.querySelectorAll('[data-nav-label]').forEach((input) => {
+      input.addEventListener('input', () => (list[Number(input.getAttribute('data-nav-label'))].label = input.value));
+    });
+    tbody.querySelectorAll('[data-nav-href]').forEach((input) => {
+      input.addEventListener('input', () => (list[Number(input.getAttribute('data-nav-href'))].href = input.value));
+    });
+    tbody.querySelectorAll('[data-nav-move]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.getAttribute('data-nav-move'));
+        const swapWith = btn.getAttribute('data-direction') === 'up' ? idx - 1 : idx + 1;
+        if (swapWith < 0 || swapWith >= list.length) return;
+        [list[idx], list[swapWith]] = [list[swapWith], list[idx]];
+        renderLinkTable(tbodyId, list);
+      });
+    });
+    tbody.querySelectorAll('[data-nav-remove]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        list.splice(Number(btn.getAttribute('data-nav-remove')), 1);
+        renderLinkTable(tbodyId, list);
+      });
+    });
+  }
+  renderLinkTable('nav-header-tbody', headerLinks);
+  renderLinkTable('nav-shop-tbody', footerShop);
+  renderLinkTable('nav-company-tbody', footerCompany);
+
+  document.getElementById('nav-header-add').addEventListener('click', () => {
+    headerLinks.push({ label: 'New link', href: '/' });
+    renderLinkTable('nav-header-tbody', headerLinks);
+  });
+  document.getElementById('nav-shop-add').addEventListener('click', () => {
+    footerShop.push({ label: 'New link', href: '/' });
+    renderLinkTable('nav-shop-tbody', footerShop);
+  });
+  document.getElementById('nav-company-add').addEventListener('click', () => {
+    footerCompany.push({ label: 'New link', href: '/' });
+    renderLinkTable('nav-company-tbody', footerCompany);
+  });
+
+  document.getElementById('nav-save').addEventListener('click', async () => {
+    await Promise.all([
+      api('/api/content/nav_header', { method: 'PATCH', body: { links: headerLinks } }),
+      api('/api/content/nav_footer', { method: 'PATCH', body: { shop: footerShop, company: footerCompany } }),
+    ]);
+    const saved = document.getElementById('nav-saved');
+    saved.style.display = 'inline';
+    setTimeout(() => (saved.style.display = 'none'), 2500);
+  });
+}
+
 const TAB_RENDERERS = {
   dashboard: renderDashboardHomeTab,
   products: renderProductsTab,
@@ -3446,6 +3898,10 @@ const TAB_RENDERERS = {
   settings: renderStoreSettingsTab,
   reports: renderReportsTab,
   audit: renderAuditLogTab,
+  media: renderMediaLibraryTab,
+  pages: renderPagesTab,
+  'homepage-builder': renderHomepageBuilderTab,
+  navigation: renderNavigationTab,
 };
 
 async function loadModeNote() {

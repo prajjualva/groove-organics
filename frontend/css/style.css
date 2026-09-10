@@ -93,6 +93,13 @@ a { color: inherit; text-decoration: none; }
 }
 .section { padding: 96px 0; }
 .section--tight { padding: 56px 0; }
+/* Admin Phase 7 (Homepage Builder): a section an admin has toggled off from
+   Admin -> Homepage Builder. A dedicated class (rather than JS setting
+   style.display directly) so this always wins regardless of what order
+   home-content.js's various async section-loaders happen to resolve in —
+   e.g. the promo section's own banner-driven display:none/'' toggle can't
+   accidentally un-hide a section the admin deliberately hid. */
+.section--builder-hidden { display: none !important; }
 .section--dark { background: var(--moss-900); color: var(--cream); }
 /* h1-h4 are colored directly (not inherited) by the base rule above, so
    each needs an explicit re-override here — h4 was missing until now,

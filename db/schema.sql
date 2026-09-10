@@ -946,3 +946,101 @@ set value = '{
   updated_at = now()
 where key = 'homepage_story'
   and value::text like '%cruelty-free certification%';
+
+-- =====================================================================
+-- Admin Phase 7: Website CMS — Media Library, Pages, Homepage Section
+-- Builder, Navigation editor.
+--
+-- Homepage Builder (section reorder/show-hide) and the Navigation editor
+-- (header/footer link lists) need no new tables at all — both reuse the
+-- existing generic public.site_content jsonb store (see backend/lib/
+-- dataStore.js's DEFAULT_CONTENT keys 'homepage_layout', 'nav_header',
+-- 'nav_footer'), the same admin-editable-copy mechanism every other
+-- Content tab already uses. Only the two genuinely new subsystems — a real
+-- Media Library and generic Pages — need new tables, below.
+-- =====================================================================
+
+-- Media Library: every image everywhere else in this app today is a
+-- base64 string pasted directly into the record that uses it (products,
+-- categories, banners) — fine for a one-off photo, but there's no shared,
+-- browsable, reusable list of uploaded files, and no real file storage
+-- (every image bloats its own row and every backup). This table is that
+-- library's metadata; the actual file bytes live in Supabase Storage (see
+-- the bucket + policies below) — `url` is the file's public Storage URL,
+-- `storage_path` is its path within the bucket (needed to delete the
+-- underlying file later). In demo mode (no Supabase configured) there's no
+-- real Storage to upload to, so `url` holds the uploaded file's own data:
+-- URL directly instead — same base64-in-memory approach every other image
+-- already uses in demo mode, just centralized into one browsable list.
+create table if not exists public.media (
+  id uuid primary key default gen_random_uuid(),
+  filename text not null,
+  url text not null,
+  storage_path text,              -- null in demo mode (no real Storage object to point to)
+  mime_type text,
+  size_bytes integer,
+  alt_text text,
+  uploaded_by text,                -- admin/staff email
+  created_at timestamptz not null default now()
+);
+alter table public.media enable row level security;
+drop policy if exists "media_admin_all" on public.media;
+create policy "media_admin_all" on public.media
+  for all using (public.current_role() in ('admin', 'staff')) with check (public.current_role() in ('admin', 'staff'));
+
+-- Pages: a generic CMS page (e.g. "Our Process", "Sustainability", a press
+-- page) with none of the fixed layout products/categories/legal pages
+-- have — just a title + a body, publishable independently of code. Distinct
+-- from the 4 legal pages (page_terms/page_privacy/page_refund_policy/
+-- page_shipping_policy in site_content), which stay exactly as they are —
+-- those are fixed single pages at fixed URLs, not a list an admin adds to.
+create table if not exists public.pages (
+  id uuid primary key default gen_random_uuid(),
+  slug text unique not null,
+  title text not null,
+  body text not null default '',
+  status text not null default 'draft' check (status in ('draft', 'published')),
+  seo_title text,
+  seo_meta_description text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.pages enable row level security;
+drop policy if exists "pages_public_read_published" on public.pages;
+create policy "pages_public_read_published" on public.pages
+  for select using (status = 'published' or public.current_role() in ('admin', 'staff'));
+drop policy if exists "pages_admin_write" on public.pages;
+create policy "pages_admin_write" on public.pages
+  for insert with check (public.current_role() in ('admin', 'staff'));
+drop policy if exists "pages_admin_update" on public.pages;
+create policy "pages_admin_update" on public.pages
+  for update using (public.current_role() in ('admin', 'staff')) with check (public.current_role() in ('admin', 'staff'));
+drop policy if exists "pages_admin_delete" on public.pages;
+create policy "pages_admin_delete" on public.pages
+  for delete using (public.current_role() in ('admin', 'staff'));
+
+-- Supabase Storage bucket for the Media Library, created here (via SQL)
+-- rather than asking you to click through the Storage tab by hand — this
+-- is a documented, supported way to create a bucket. `public: true` means
+-- an uploaded file's URL is directly viewable (like every other image on
+-- this site) without needing a signed URL. If your Supabase plan/SQL Editor
+-- ever refuses this insert, the equivalent manual step is: Supabase
+-- dashboard -> Storage -> New bucket -> name it exactly "media" -> Public.
+insert into storage.buckets (id, name, public)
+values ('media', 'media', true)
+on conflict (id) do nothing;
+
+-- Storage RLS: the backend always uploads/deletes via the service-role key
+-- (which bypasses RLS entirely), so these policies are defense-in-depth for
+-- any future direct-from-browser Storage access, not load-bearing for the
+-- Media Library tab itself. Public read matches the bucket's own
+-- public:true setting; writes/deletes are restricted to admin/staff.
+drop policy if exists "media_bucket_public_read" on storage.objects;
+create policy "media_bucket_public_read" on storage.objects
+  for select using (bucket_id = 'media');
+drop policy if exists "media_bucket_admin_write" on storage.objects;
+create policy "media_bucket_admin_write" on storage.objects
+  for insert with check (bucket_id = 'media' and public.current_role() in ('admin', 'staff'));
+drop policy if exists "media_bucket_admin_delete" on storage.objects;
+create policy "media_bucket_admin_delete" on storage.objects
+  for delete using (bucket_id = 'media' and public.current_role() in ('admin', 'staff'));

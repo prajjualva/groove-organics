@@ -8,26 +8,66 @@
 // everywhere on the site (nav + footer both use this one constant).
 const LOGO_SVG = `<img src="/assets/logo.png" alt="Groove Organics" class="brand-logo" />`;
 
+// Escapes admin-entered text (Navigation editor link labels/hrefs) before it
+// goes into innerHTML on every page's live nav/footer. This content is
+// admin/staff-authored, not visitor-authored, but every other admin-entered
+// string already rendered into customer-facing HTML in this app (banner
+// titles, homepage copy — see home-content.js's own escapeHtml) is escaped
+// the same way, as protection against a compromised or careless staff
+// account rather than an untrusted-visitor threat model.
+function escapeHtmlNav(str) {
+  return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Admin Phase 7 (Navigation editor): the primary link set, as plain
+// [href, label, key] tuples — Home stays first and fixed (matches "Home"
+// having no admin-editable row anywhere else in this app either), Shop/Our
+// Story/Contact are the admin-editable defaults (see dataStore.js's
+// DEFAULT_CONTENT.nav_header), and Deals stays a fixed pill in the icon
+// cluster (a deliberate, non-editable design choice from the customer-
+// website audit — see the comment where it's rendered below), not a plain
+// link an admin could accidentally demote back into the icon cluster or
+// remove. NAV_HEADER_LINKS is mutable module state so an async content
+// fetch can override just the middle 3 without touching Home/Deals — see
+// applyNavContentOverrides() at the bottom of this file.
+let NAV_HEADER_LINKS = [
+  ['/shop', 'Shop', 'shop'],
+  ['/about', 'Our Story', 'about'],
+  ['/contact', 'Contact', 'contact'],
+];
+let NAV_ACTIVE_KEY = '';
+
+function renderNavLinksOnly() {
+  const links = [['/', 'Home', ''], ...NAV_HEADER_LINKS];
+  const linkHtml = (mobile) =>
+    links
+      .map(
+        ([href, label, key]) =>
+          `<a href="${escapeHtmlNav(href)}"${key === NAV_ACTIVE_KEY ? ' aria-current="page"' : ''}>${escapeHtmlNav(label)}</a>`
+      )
+      .join('') + (mobile ? `<a href="/deals"${NAV_ACTIVE_KEY === 'deals' ? ' aria-current="page"' : ''}>Deals</a>` : '');
+  const desktopEl = document.querySelector('.nav__links');
+  const mobileEl = document.getElementById('nav-mobile');
+  if (desktopEl) desktopEl.innerHTML = linkHtml(false);
+  if (mobileEl) mobileEl.innerHTML = linkHtml(true);
+}
+
 function renderNav(active = '') {
   const root = document.getElementById('nav-root');
   if (!root) return;
+  NAV_ACTIVE_KEY = active;
   // "Deals" was previously a primary nav item alongside Shop/Our Story —
   // per the customer-website audit (§4b), that reads as discount-store
   // energy in prime nav real estate for a "premium simplicity" brand. It
   // still gets a real, easy-to-find link (a small pill in the icon
   // cluster, styled distinctly from the icon buttons) rather than being
   // removed outright.
-  const links = [
-    ['/', 'Home', ''],
-    ['/shop', 'Shop', 'shop'],
-    ['/about', 'Our Story', 'about'],
-    ['/contact', 'Contact', 'contact'],
-  ];
+  const links = [['/', 'Home', ''], ...NAV_HEADER_LINKS];
   const linkHtml = (mobile) =>
     links
       .map(
         ([href, label, key]) =>
-          `<a href="${href}"${key === active ? ' aria-current="page"' : ''}>${label}</a>`
+          `<a href="${escapeHtmlNav(href)}"${key === active ? ' aria-current="page"' : ''}>${escapeHtmlNav(label)}</a>`
       )
       .join('') + (mobile ? `<a href="/deals"${active === 'deals' ? ' aria-current="page"' : ''}>Deals</a>` : '');
 
@@ -159,6 +199,37 @@ function closeSearchPanel() {
   document.getElementById('site-search-panel')?.classList.remove('open');
 }
 
+// Admin Phase 7 (Navigation editor): the two footer link columns as plain
+// {label, href} lists — see dataStore.js's DEFAULT_CONTENT.nav_footer.
+// Mutable module state for the same reason as NAV_HEADER_LINKS above: an
+// async content fetch can override these without re-rendering (and
+// re-binding the newsletter form inside) the whole footer.
+let NAV_FOOTER_SHOP = [
+  { label: 'All Oils', href: '/shop' },
+  { label: 'Deals', href: '/deals' },
+  { label: 'Coming Soon', href: '/shop' },
+];
+let NAV_FOOTER_COMPANY = [
+  { label: 'Our Story', href: '/about' },
+  { label: 'Contact', href: '/contact' },
+  { label: 'FAQ', href: '/faq' },
+  { label: 'Terms', href: '/terms' },
+  { label: 'Privacy', href: '/privacy' },
+  { label: 'Refunds', href: '/refund-policy' },
+  { label: 'Shipping', href: '/shipping-policy' },
+];
+
+function footerColumnLinksHtml(items) {
+  return items.map((l) => `<li><a href="${escapeHtmlNav(l.href)}">${escapeHtmlNav(l.label)}</a></li>`).join('');
+}
+
+function renderFooterColumnsOnly() {
+  const shopEl = document.querySelector('[data-footer-col="shop"]');
+  const companyEl = document.querySelector('[data-footer-col="company"]');
+  if (shopEl) shopEl.innerHTML = footerColumnLinksHtml(NAV_FOOTER_SHOP);
+  if (companyEl) companyEl.innerHTML = footerColumnLinksHtml(NAV_FOOTER_COMPANY);
+}
+
 function renderFooter() {
   const root = document.getElementById('footer-root');
   if (!root) return;
@@ -172,23 +243,11 @@ function renderFooter() {
           </div>
           <div class="footer__col">
             <h4>Shop</h4>
-            <ul>
-              <li><a href="/shop">All Oils</a></li>
-              <li><a href="/deals">Deals</a></li>
-              <li><a href="/shop">Coming Soon</a></li>
-            </ul>
+            <ul data-footer-col="shop">${footerColumnLinksHtml(NAV_FOOTER_SHOP)}</ul>
           </div>
           <div class="footer__col">
             <h4>Company</h4>
-            <ul>
-              <li><a href="/about">Our Story</a></li>
-              <li><a href="/contact">Contact</a></li>
-              <li><a href="/faq">FAQ</a></li>
-              <li><a href="/terms">Terms</a></li>
-              <li><a href="/privacy">Privacy</a></li>
-              <li><a href="/refund-policy">Refunds</a></li>
-              <li><a href="/shipping-policy">Shipping</a></li>
-            </ul>
+            <ul data-footer-col="company">${footerColumnLinksHtml(NAV_FOOTER_COMPANY)}</ul>
           </div>
           <div class="footer__col">
             <h4>Stay in the loop</h4>
@@ -262,6 +321,35 @@ function renderSiteChrome(active = '') {
   } catch (err) {
     console.error('Footer failed to render', err);
   }
+  // Admin Phase 7 (Navigation editor): fires after the synchronous default
+  // render above, never before it — every page's nav/footer paints
+  // instantly with the built-in defaults exactly as before this feature
+  // existed, then this quietly patches in an admin's customizations (if
+  // any) a moment later. Deliberately does NOT re-render the whole nav/
+  // footer (which would re-bind the toggle/search/scroll listeners and the
+  // newsletter form a second time) — it only ever swaps the innerHTML of
+  // the link lists themselves, via renderNavLinksOnly()/
+  // renderFooterColumnsOnly() above.
+  applyNavContentOverrides(active).catch((err) => console.error('Nav content overrides failed to load', err));
+}
+
+async function applyNavContentOverrides(active) {
+  if (typeof api !== 'function') return;
+  const { content } = await api('/api/content', { auth: false });
+  const headerLinks = content.nav_header && Array.isArray(content.nav_header.links) ? content.nav_header.links : null;
+  if (headerLinks && headerLinks.length) {
+    NAV_HEADER_LINKS = headerLinks.map((l) => [l.href, l.label, '']); // no admin-set key currently maps to an aria-current match; acceptable — aria-current only ever applied to Home/Deals anyway once customized
+    NAV_ACTIVE_KEY = active;
+    renderNavLinksOnly();
+  }
+  const footer = content.nav_footer;
+  if (footer && Array.isArray(footer.shop) && footer.shop.length) {
+    NAV_FOOTER_SHOP = footer.shop;
+  }
+  if (footer && Array.isArray(footer.company) && footer.company.length) {
+    NAV_FOOTER_COMPANY = footer.company;
+  }
+  if (footer) renderFooterColumnsOnly();
 }
 
 function updateCartBadge() {

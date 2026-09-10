@@ -22,6 +22,8 @@ const couponRoutes = require('./routes/coupons');
 const shippingRoutes = require('./routes/shipping');
 const loyaltyRoutes = require('./routes/loyalty');
 const reportsRoutes = require('./routes/reports');
+const mediaRoutes = require('./routes/media'); // Admin Phase 7: Media Library
+const pagesRoutes = require('./routes/pages'); // Admin Phase 7: generic CMS Pages
 const { isConfigured: supabaseConfigured, supabaseUrl, supabaseAnonKey } = require('./lib/supabase');
 const { isConfigured: razorpayConfigured } = require('./lib/razorpay');
 
@@ -59,17 +61,21 @@ app.use('/api/coupons', couponRoutes);
 app.use('/api/shipping', shippingRoutes);
 app.use('/api/loyalty', loyaltyRoutes);
 app.use('/api/reports', reportsRoutes);
+app.use('/api/media', mediaRoutes);
+app.use('/api/pages', pagesRoutes);
 
 // --- SEO: sitemap.xml + robots.txt, generated from the current catalog ---
 app.get('/sitemap.xml', async (req, res, next) => {
   try {
     const store = require('./lib/dataStore');
     const products = await store.listProducts({ includeInactive: false });
+    const pages = await store.listPages({ includeUnpublished: false });
     const origin = `${req.protocol}://${req.get('host')}`;
     const staticPaths = ['/', '/shop', '/deals', '/about', '/contact', '/faq', '/terms', '/privacy', '/refund-policy', '/shipping-policy'];
     const urls = [
       ...staticPaths.map((p) => `${origin}${p}`),
       ...products.map((p) => `${origin}/product?slug=${encodeURIComponent(p.slug)}`),
+      ...pages.map((p) => `${origin}/p/${encodeURIComponent(p.slug)}`),
     ];
     const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
       .map((u) => `  <url><loc>${u}</loc></url>`)
@@ -172,6 +178,13 @@ const pageRoutes = {
 Object.entries(pageRoutes).forEach(([route, file]) => {
   app.get(route, (req, res) => res.sendFile(path.join(frontendDir, file)));
 });
+
+// Admin Phase 7: generic CMS Pages live at /p/:slug — one template
+// (page.html + page.js) that fetches GET /api/pages/:slug and renders
+// whatever title/body an admin created from Admin -> Pages. Distinct from
+// the fixed pageRoutes map above (those are each their own dedicated
+// HTML/JS pair); this one route serves every admin-created page.
+app.get('/p/:slug', (req, res) => res.sendFile(path.join(frontendDir, 'page.html')));
 
 app.listen(PORT, () => {
   console.log(`Groove Organics server running on http://localhost:${PORT}`);

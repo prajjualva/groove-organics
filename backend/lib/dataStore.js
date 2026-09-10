@@ -2087,6 +2087,60 @@ const DEFAULT_CONTENT = {
       { question: 'Can I track my order?', answer: 'Yes — once your order ships, tracking details (when available) appear on your order confirmation page and in your account’s order history.' },
     ],
   },
+  // Admin Phase 7 (Navigation editor). The header's Home link and the
+  // icon-cluster items (search/wishlist/account/cart/Deals pill) stay fixed
+  // in frontend/js/partials.js — they're functional controls, not plain
+  // links, so only the "plain link" set is admin-editable here. These
+  // defaults are exactly what's hardcoded today, so nothing visibly changes
+  // on the live site until an admin actually edits one from Admin ->
+  // Navigation. See partials.js's applyNavContentOverrides() for how this
+  // is layered on top of the always-synchronous default render (never
+  // blocks or delays the nav's first paint).
+  nav_header: {
+    links: [
+      { label: 'Shop', href: '/shop' },
+      { label: 'Our Story', href: '/about' },
+      { label: 'Contact', href: '/contact' },
+    ],
+  },
+  // Two footer columns are admin-editable (Shop, Company); the brand blurb
+  // and the newsletter signup column stay fixed in partials.js since they
+  // carry real functionality (the newsletter form), not just links.
+  nav_footer: {
+    shop: [
+      { label: 'All Oils', href: '/shop' },
+      { label: 'Deals', href: '/deals' },
+      { label: 'Coming Soon', href: '/shop' },
+    ],
+    company: [
+      { label: 'Our Story', href: '/about' },
+      { label: 'Contact', href: '/contact' },
+      { label: 'FAQ', href: '/faq' },
+      { label: 'Terms', href: '/terms' },
+      { label: 'Privacy', href: '/privacy' },
+      { label: 'Refunds', href: '/refund-policy' },
+      { label: 'Shipping', href: '/shipping-policy' },
+    ],
+  },
+  // Admin Phase 7 (Homepage Section Builder). Controls the ORDER and
+  // VISIBILITY of the homepage sections below the hero (the hero itself
+  // always stays first/visible — every real site builder treats the hero as
+  // fixed, and hiding it entirely has no sane use case). Each `key` matches
+  // a `data-section-key` attribute on that section's <section> element in
+  // frontend/index.html — see home-content.js's applyHomepageLayout(). This
+  // default order/visibility is exactly what's on the page today, so
+  // nothing visibly changes until an admin reorders or hides something from
+  // Admin -> Homepage Builder.
+  homepage_layout: {
+    sections: [
+      { key: 'feature_strip', label: 'Feature strip (4 icons)', visible: true },
+      { key: 'promo', label: 'Offers & Highlights (promo banners)', visible: true },
+      { key: 'philosophy', label: 'Our Philosophy', visible: true },
+      { key: 'process_video', label: 'The Journey of the Oil (process video)', visible: true },
+      { key: 'products', label: 'Our Oils (product grid)', visible: true },
+      { key: 'newsletter', label: 'Newsletter signup', visible: true },
+    ],
+  },
 };
 
 async function listContent() {
@@ -2116,6 +2170,223 @@ async function setContent(key, value) {
   }
   mock.siteContent.set(key, value);
   return value;
+}
+
+// --- Admin Phase 7: Media Library (backed by Supabase Storage's "media"
+// bucket in live mode — see db/schema.sql; kept as a data: URL in-memory
+// list in demo mode, since there's no real file storage to upload to). ---
+
+async function listMedia() {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    const { data, error } = await client.from('media').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+  return [...mock.media].reverse();
+}
+
+// dataUrl: a full "data:<mime>;base64,<payload>" string, exactly what the
+// admin UI's readFileAsDataUrl() produces from a <input type="file">. Kept
+// as the one upload shape across this whole app (products/categories/
+// banners already all upload this way) rather than introducing multipart
+// form-data just for this one new feature.
+function parseDataUrl(dataUrl) {
+  const match = /^data:([^;]+);base64,(.+)$/s.exec(String(dataUrl || ''));
+  if (!match) throw new Error('That file could not be read — please choose an image file and try again.');
+  return { mimeType: match[1], buffer: Buffer.from(match[2], 'base64') };
+}
+
+async function uploadMedia({ filename, dataUrl, altText = null, uploadedBy = null }) {
+  if (!filename || !dataUrl) throw new Error('filename and a file are required.');
+  const { mimeType, buffer } = parseDataUrl(dataUrl);
+  const safeName = String(filename).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120);
+
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const storagePath = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
+    const { error: uploadError } = await supabaseAdmin.storage.from('media').upload(storagePath, buffer, {
+      contentType: mimeType,
+      upsert: false,
+    });
+    if (uploadError) throw new Error(uploadError.message || 'Upload to storage failed.');
+    const { data: publicUrlData } = supabaseAdmin.storage.from('media').getPublicUrl(storagePath);
+    const { data, error } = await supabaseAdmin
+      .from('media')
+      .insert({
+        filename: safeName,
+        url: publicUrlData.publicUrl,
+        storage_path: storagePath,
+        mime_type: mimeType,
+        size_bytes: buffer.length,
+        alt_text: altText,
+        uploaded_by: uploadedBy,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  const row = {
+    id: mock.uid('media'),
+    filename: safeName,
+    url: dataUrl, // demo mode: the data: URL itself IS the "stored file"
+    storage_path: null,
+    mime_type: mimeType,
+    size_bytes: buffer.length,
+    alt_text: altText,
+    uploaded_by: uploadedBy,
+    created_at: new Date().toISOString(),
+  };
+  mock.media.push(row);
+  return row;
+}
+
+async function updateMediaAltText(id, altText) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin.from('media').update({ alt_text: altText }).eq('id', id).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const item = mock.media.find((m) => m.id === id);
+  if (!item) return null;
+  item.alt_text = altText;
+  return item;
+}
+
+async function deleteMedia(id) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data: existing } = await supabaseAdmin.from('media').select('storage_path').eq('id', id).single();
+    if (existing && existing.storage_path) {
+      // Best-effort: if the storage object is somehow already gone, still
+      // proceed to delete the metadata row rather than leaving an orphaned
+      // library entry the admin can't remove.
+      await supabaseAdmin.storage.from('media').remove([existing.storage_path]).catch(() => {});
+    }
+    const { error } = await supabaseAdmin.from('media').delete().eq('id', id);
+    if (error) throw error;
+    return true;
+  }
+  const idx = mock.media.findIndex((m) => m.id === id);
+  if (idx === -1) return false;
+  mock.media.splice(idx, 1);
+  return true;
+}
+
+// --- Admin Phase 7: Pages (generic CMS pages, distinct from the 4 fixed
+// legal pages which stay in site_content as page_terms/page_privacy/etc). ---
+
+async function listPages({ includeUnpublished = false } = {}) {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    let query = client.from('pages').select('*').order('created_at', { ascending: false });
+    if (!includeUnpublished) query = query.eq('status', 'published');
+    const { data, error } = await query;
+    if (error) throw error;
+    return data;
+  }
+  return mock.pages
+    .filter((p) => includeUnpublished || p.status === 'published')
+    .slice()
+    .reverse();
+}
+
+async function getPageBySlug(slug, { includeUnpublished = false } = {}) {
+  if (isConfigured) {
+    const client = supabaseAdmin || supabase;
+    let query = client.from('pages').select('*').eq('slug', slug);
+    if (!includeUnpublished) query = query.eq('status', 'published');
+    const { data, error } = await query.maybeSingle();
+    if (error) throw error;
+    return data || null;
+  }
+  const page = mock.pages.find((p) => p.slug === slug);
+  if (!page) return null;
+  if (!includeUnpublished && page.status !== 'published') return null;
+  return page;
+}
+
+async function createPage({ slug, title, body = '', status = 'draft', seoTitle = null, seoMetaDescription = null }) {
+  if (!slug || !slug.trim()) throw new Error('A URL slug is required.');
+  if (!title || !title.trim()) throw new Error('A title is required.');
+  const cleanSlug = slug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!cleanSlug) throw new Error('That slug is not valid — use letters, numbers, and dashes.');
+
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin
+      .from('pages')
+      .insert({ slug: cleanSlug, title: title.trim(), body, status, seo_title: seoTitle, seo_meta_description: seoMetaDescription })
+      .select()
+      .single();
+    if (error) {
+      if (String(error.message || '').includes('duplicate')) throw new Error('A page with that slug already exists.');
+      throw error;
+    }
+    return data;
+  }
+  if (mock.pages.some((p) => p.slug === cleanSlug)) throw new Error('A page with that slug already exists.');
+  const row = {
+    id: mock.uid('page'),
+    slug: cleanSlug,
+    title: title.trim(),
+    body,
+    status,
+    seo_title: seoTitle,
+    seo_meta_description: seoMetaDescription,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  mock.pages.push(row);
+  return row;
+}
+
+async function updatePage(id, patch) {
+  const allowed = {};
+  if (patch.slug != null) allowed.slug = String(patch.slug).trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (patch.title != null) allowed.title = String(patch.title).trim();
+  if (patch.body != null) allowed.body = patch.body;
+  if (patch.status != null) allowed.status = patch.status;
+  if (patch.seoTitle !== undefined) allowed.seo_title = patch.seoTitle;
+  if (patch.seoMetaDescription !== undefined) allowed.seo_meta_description = patch.seoMetaDescription;
+
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { data, error } = await supabaseAdmin
+      .from('pages')
+      .update({ ...allowed, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) {
+      if (String(error.message || '').includes('duplicate')) throw new Error('A page with that slug already exists.');
+      throw error;
+    }
+    return data;
+  }
+  const page = mock.pages.find((p) => p.id === id);
+  if (!page) return null;
+  if (allowed.slug && mock.pages.some((p) => p.id !== id && p.slug === allowed.slug)) {
+    throw new Error('A page with that slug already exists.');
+  }
+  Object.assign(page, allowed, { updated_at: new Date().toISOString() });
+  return page;
+}
+
+async function deletePage(id) {
+  if (isConfigured) {
+    if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
+    const { error } = await supabaseAdmin.from('pages').delete().eq('id', id);
+    if (error) throw error;
+    return true;
+  }
+  const idx = mock.pages.findIndex((p) => p.id === id);
+  if (idx === -1) return false;
+  mock.pages.splice(idx, 1);
+  return true;
 }
 
 // --- Product variants (size and/or color) ---
@@ -2511,6 +2782,15 @@ module.exports = {
   deleteReview,
   listContent,
   setContent,
+  listMedia,
+  uploadMedia,
+  updateMediaAltText,
+  deleteMedia,
+  listPages,
+  getPageBySlug,
+  createPage,
+  updatePage,
+  deletePage,
   listVariants,
   createVariant,
   updateVariant,

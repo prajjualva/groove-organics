@@ -276,8 +276,48 @@ async function loadPromoBanners() {
   }
 }
 
+// Admin Phase 7 (Homepage Section Builder): reorders/hides the homepage
+// sections BELOW the hero, per Admin -> Homepage Builder. Reads
+// content.homepage_layout.sections — see dataStore.js's DEFAULT_CONTENT for
+// the shape and the default order (which matches this page's current
+// hardcoded order exactly, so nothing visibly changes until an admin
+// actually reorders or hides something). Deliberately reorders/hides only —
+// it never rewrites a section's own markup or styling, so every section
+// keeps looking exactly as designed; this just controls which ones show and
+// in what order. The hero itself has no data-section-key and is never
+// touched — it always stays first.
+async function applyHomepageLayout() {
+  try {
+    const { content } = await api('/api/content', { auth: false });
+    const sections = content.homepage_layout && Array.isArray(content.homepage_layout.sections) ? content.homepage_layout.sections : null;
+    if (!sections || !sections.length) return; // no customization saved yet — leave the page's built-in order alone
+
+    // Sections are reordered by inserting each one (in the saved order)
+    // right before a fixed anchor — the #footer-root div, which is always
+    // the last thing on the page after every section (see index.html).
+    // insertBefore on a node already in the DOM MOVES it rather than
+    // duplicating it, so walking the list in order and always inserting
+    // just before that same anchor naturally lines every section up in the
+    // saved order, still ahead of the footer — appendChild straight onto
+    // <body> would have been wrong here, since it would push each section
+    // past #footer-root (and the trailing <script> tags) to the very end.
+    const anchor = document.getElementById('footer-root');
+    if (!anchor) return;
+    sections.forEach((s) => {
+      const el = document.querySelector(`[data-section-key="${s.key}"]`);
+      if (!el) return; // an unknown/renamed key — skip rather than throw
+      el.classList.toggle('section--builder-hidden', s.visible === false);
+      anchor.parentElement.insertBefore(el, anchor);
+    });
+  } catch (err) {
+    // No saved layout, or the request failed — leave the page's own
+    // built-in section order and visibility exactly as authored.
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadHeroSlider();
   loadHomepageContent();
   loadPromoBanners();
+  applyHomepageLayout();
 });
