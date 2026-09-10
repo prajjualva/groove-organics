@@ -30,6 +30,18 @@ const { isConfigured: razorpayConfigured } = require('./lib/razorpay');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Render (like Heroku and most PaaS hosts) terminates HTTPS at its own load
+// balancer and forwards plain HTTP to this process, adding an
+// X-Forwarded-Proto header saying what the visitor actually used. Without
+// this, Express has no way to know that and req.protocol always reports
+// 'http' even for a real https:// visitor — which broke the password-reset
+// link (it was being built as http://..., which never matched the https://
+// entries in Supabase's Redirect URLs allowlist), and also affected
+// sitemap.xml/robots.txt (wrong scheme in the URLs submitted to Google) and
+// the refer-a-friend share link. `1` trusts exactly one hop (Render's own
+// proxy) — not an open/arbitrary trust of any client-supplied header.
+app.set('trust proxy', 1);
+
 // Gzip/brotli-negotiated compression for every response (HTML/CSS/JS/JSON) —
 // the site had none of this before, which on a slow/mobile connection adds
 // up fast across pages that pull in several scripts and a big product list.

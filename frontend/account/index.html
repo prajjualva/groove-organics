@@ -102,10 +102,37 @@ document.getElementById('back-to-login-link').addEventListener('click', (e) => {
   loginForm.style.display = 'block';
 });
 
+// The submit button briefly disables itself right after sending (so an
+// impatient double-click doesn't fire two requests at once), then
+// re-enables with a "Resend email" label after a short cooldown — it
+// previously stayed disabled forever with no way to ask for another one
+// without leaving the page and coming back.
+const RESEND_COOLDOWN_SECONDS = 20;
+let resendTimer = null;
+
+function startResendCooldown(button) {
+  if (resendTimer) clearInterval(resendTimer);
+  button.disabled = true;
+  let remaining = RESEND_COOLDOWN_SECONDS;
+  button.textContent = `Resend in ${remaining}s`;
+  resendTimer = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(resendTimer);
+      resendTimer = null;
+      button.disabled = false;
+      button.textContent = 'Resend email';
+      return;
+    }
+    button.textContent = `Resend in ${remaining}s`;
+  }, 1000);
+}
+
 document.getElementById('forgot-password-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const errorEl = document.getElementById('forgot-password-error');
   const successEl = document.getElementById('forgot-password-success');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
   errorEl.style.display = 'none';
   successEl.style.display = 'none';
   try {
@@ -116,7 +143,7 @@ document.getElementById('forgot-password-form').addEventListener('submit', async
     });
     successEl.textContent = result.message || "If an account exists for that email, we've sent a reset link.";
     successEl.style.display = 'block';
-    e.target.querySelector('button[type="submit"]').disabled = true;
+    startResendCooldown(submitBtn);
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.style.display = 'block';
