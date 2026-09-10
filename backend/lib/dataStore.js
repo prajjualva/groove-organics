@@ -7,6 +7,7 @@
 
 const { supabase, supabaseAdmin, isConfigured } = require('./supabase');
 const mock = require('./mockStore');
+const email = require('./email');
 
 function toPublicProduct(row) {
   if (!row) return row;
@@ -1365,15 +1366,45 @@ async function listAllLoyaltyLedger({ from = null, to = null } = {}) {
 }
 
 async function addLoyaltyEntry(entry) {
+  let row;
   if (isConfigured) {
     if (!supabaseAdmin) throw new Error('Admin writes need SUPABASE_SERVICE_ROLE_KEY set.');
     const { data, error } = await supabaseAdmin.from('loyalty_ledger').insert(entry).select().single();
     if (error) throw error;
-    return data;
+    row = data;
+  } else {
+    row = { id: `loy_${Date.now()}_${Math.round(Math.random() * 1e6)}`, created_at: new Date().toISOString(), ...entry };
+    mock.loyaltyLedger.push(row);
   }
-  const row = { id: `loy_${Date.now()}_${Math.round(Math.random() * 1e6)}`, created_at: new Date().toISOString(), ...entry };
-  mock.loyaltyLedger.push(row);
+  // Email the customer for every CREDIT (order_earned, referral_bonus, or a
+  // positive manual_adjustment) — never for a debit (order_redeemed, or a
+  // negative manual_adjustment). Fire-and-forget: a notification failure
+  // must never roll back or block the points actually being recorded.
+  if (row.points_delta > 0) {
+    notifyPointsCredited(row).catch((err) => console.error('notifyPointsCredited failed:', err.message));
+  }
   return row;
+}
+
+// The one lookup this needs (customer email/name by id) reuses listCustomers()
+// rather than a second admin.listUsers() call — same pattern already used by
+// getReferredFriendsDetail below, since profiles has no email column of its
+// own (that lives on auth.users) and this store is small-scale enough that
+// re-listing customers per credit is not a real cost.
+async function notifyPointsCredited(entry) {
+  if (!entry.user_id) return;
+  const customers = await listCustomers();
+  const customer = customers.find((c) => c.id === entry.user_id);
+  if (!customer || !customer.email) return;
+  const newBalance = await getLoyaltyBalance(entry.user_id);
+  await email.sendPointsCreditedEmail({
+    toEmail: customer.email,
+    customerName: customer.full_name,
+    points: entry.points_delta,
+    reason: entry.reason,
+    note: entry.note || null,
+    newBalance,
+  });
 }
 
 async function earnLoyaltyPoints(userId, orderId, productSubtotalPaise) {

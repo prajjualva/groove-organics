@@ -210,10 +210,18 @@ router.patch('/:id/status', requireRole('admin', 'staff'), async (req, res, next
     if (!allowed.includes(status)) {
       return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
     }
+    const existing = await store.getOrder(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Order not found.' });
+    const previousStatus = existing.status;
     const order = await store.updateOrderStatus(req.params.id, status, req.user.email || null);
     if (!order) return res.status(404).json({ error: 'Order not found.' });
-    if (status === 'shipped') {
-      email.sendOrderShippedEmail(order).catch((err) => console.error('sendOrderShippedEmail failed:', err.message));
+    // Every status a staff/admin can select fires a customer email (except
+    // 'placed', already covered by sendOrderConfirmedEmail at order
+    // creation) — and only when it's an actual change, so re-selecting the
+    // same status in the dropdown doesn't re-send a duplicate email (it
+    // already doesn't re-log a duplicate timeline event, for the same reason).
+    if (status !== previousStatus) {
+      email.sendOrderStatusEmail(order, status).catch((err) => console.error('sendOrderStatusEmail failed:', err.message));
     }
     res.json({ order });
   } catch (err) {

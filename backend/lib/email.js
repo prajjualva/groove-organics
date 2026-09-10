@@ -59,19 +59,89 @@ async function sendOrderConfirmedEmail(order) {
   return sendEmail({ to: order.customer_email, subject: `Order confirmed — ${order.order_number}`, html });
 }
 
-async function sendOrderShippedEmail(order) {
+// Covers every order status change a staff/admin can make from the Orders
+// tab (see backend/routes/orders.js's PATCH /:id/status allowed list) except
+// 'placed' — that one's covered by sendOrderConfirmedEmail at order creation
+// time, so re-sending it here would be a duplicate.
+const ORDER_STATUS_COPY = {
+  packed: {
+    subject: 'Order packed',
+    heading: 'Your order has been packed!',
+    body: 'is packed and ready to ship — we\'ll email you again once it\'s on its way.',
+  },
+  shipped: {
+    subject: 'Order shipped',
+    heading: 'Your order is on its way!',
+    body: 'has shipped.',
+  },
+  delivered: {
+    subject: 'Order delivered',
+    heading: 'Your order has arrived!',
+    body: 'has been marked delivered. We hope you love it — thanks for shopping with us.',
+  },
+  cancelled: {
+    subject: 'Order cancelled',
+    heading: 'Your order was cancelled',
+    body: 'has been cancelled. If you were already charged, our team will process a refund where applicable.',
+  },
+};
+
+async function sendOrderStatusEmail(order, status) {
+  const copy = ORDER_STATUS_COPY[status];
+  if (!copy) return { skipped: true }; // 'placed' (or anything unrecognized) — nothing to send
   const trackingHtml = order.tracking_url
     ? `<p>Track your package: <a href="${order.tracking_url}">${order.tracking_number || 'Track'}</a>${order.courier_name ? ` (${order.courier_name})` : ''}</p>`
     : order.tracking_number
     ? `<p>Tracking number: ${order.tracking_number}</p>`
     : '';
   const html = `
-    <h2>Your order is on its way!</h2>
-    <p>Order <strong>${order.order_number}</strong> has shipped.</p>
-    ${trackingHtml}
+    <h2>${copy.heading}</h2>
+    <p>Order <strong>${order.order_number}</strong> ${copy.body}</p>
+    ${status === 'shipped' || status === 'delivered' ? trackingHtml : ''}
     <p>— Groove Organics</p>
   `;
-  return sendEmail({ to: order.customer_email, subject: `Order shipped — ${order.order_number}`, html });
+  return sendEmail({ to: order.customer_email, subject: `${copy.subject} — ${order.order_number}`, html });
+}
+
+// Kept as a thin wrapper (rather than removed) in case anything besides
+// backend/routes/orders.js ever calls it directly by name.
+async function sendOrderShippedEmail(order) {
+  return sendOrderStatusEmail(order, 'shipped');
+}
+
+async function sendWelcomeEmail(user) {
+  const name = user.full_name || 'there';
+  const html = `
+    <h2>Welcome to Groove Organics, ${name}!</h2>
+    <p>Your account is all set up. Every order you place earns Groove Points you can redeem for a
+    discount on a future purchase — and if you've got friends who'd like our oils, your Refer &amp;
+    Earn link (in your account dashboard) earns you both a bonus.</p>
+    <p>— Groove Organics</p>
+  `;
+  return sendEmail({ to: user.email, subject: 'Welcome to Groove Organics', html });
+}
+
+// Fired for every POSITIVE loyalty_ledger entry (order_earned, referral_bonus,
+// or a manual admin credit) — never for a redemption/debit. See
+// backend/lib/dataStore.js's addLoyaltyEntry, the one place every ledger
+// write in the app goes through.
+const LOYALTY_REASON_COPY = {
+  order_earned: 'for your recent order',
+  referral_bonus: 'as a referral bonus for inviting a friend to Groove Organics',
+};
+
+async function sendPointsCreditedEmail({ toEmail, customerName, points, reason, note, newBalance }) {
+  const reasonText = reason === 'manual_adjustment' && note
+    ? note
+    : (LOYALTY_REASON_COPY[reason] || 'to your Groove Organics account');
+  const html = `
+    <h2>You've earned ${points} Groove Points!</h2>
+    <p>Hi ${customerName || 'there'}, ${points} Groove Points were just credited to your account ${reasonText}.</p>
+    <p><strong>New balance: ${newBalance} points</strong></p>
+    <p>Redeem them for a discount at checkout on your next order.</p>
+    <p>— Groove Organics</p>
+  `;
+  return sendEmail({ to: toEmail, subject: `You earned ${points} Groove Points`, html });
 }
 
 async function sendPasswordResetEmail(email, actionLink) {
@@ -86,4 +156,13 @@ async function sendPasswordResetEmail(email, actionLink) {
   return sendEmail({ to: email, subject: 'Reset your Groove Organics password', html });
 }
 
-module.exports = { isConfigured, sendEmail, sendOrderConfirmedEmail, sendOrderShippedEmail, sendPasswordResetEmail };
+module.exports = {
+  isConfigured,
+  sendEmail,
+  sendOrderConfirmedEmail,
+  sendOrderShippedEmail,
+  sendOrderStatusEmail,
+  sendPasswordResetEmail,
+  sendWelcomeEmail,
+  sendPointsCreditedEmail,
+};
