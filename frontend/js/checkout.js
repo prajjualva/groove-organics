@@ -134,7 +134,11 @@ async function renderCheckoutSummary() {
     <div class="flex-between"><span>Shipping (est.)</span><span class="mono">${shipping > 0 ? formatRupees(shipping) : 'Free'}</span></div>
     ${discount ? `<div class="flex-between"><span>Coupon discount</span><span class="mono">−${formatRupees(discount)}</span></div>` : ''}
     ${loyaltyDiscountPaise ? `<div class="flex-between"><span>Groove Points (${loyaltyPointsApplied} pts)</span><span class="mono">−${formatRupees(loyaltyDiscountPaise)}</span></div>` : ''}
-    ${redeemPoints > 0 && !loyaltyDiscountPaise ? `<p style="font-size:0.78rem;color:var(--moss-700);margin:4px 0 0;">Points entered didn't apply — check your balance and the order minimum.</p>` : ''}
+    ${redeemPoints > 0 && loyaltyPointsApplied < redeemPoints
+      ? loyaltyPointsApplied > 0
+        ? `<p style="font-size:0.78rem;color:var(--moss-700);margin:4px 0 0;">Only ${loyaltyPointsApplied} of the ${redeemPoints} points you entered were applied — Groove Points can only cover part of an order's value.</p>`
+        : `<p style="font-size:0.78rem;color:var(--moss-700);margin:4px 0 0;">Points entered didn't apply — check your balance and the order minimum.</p>`
+      : ''}
     ${referralDiscountPaise ? `<div class="flex-between"><span>Referral discount</span><span class="mono">−${formatRupees(referralDiscountPaise)}</span></div>` : ''}
     <div class="flex-between" style="font-weight:700;"><span>Total</span><span class="mono">${formatRupees(total)}</span></div>
   `;
@@ -173,6 +177,15 @@ async function loadPaymentModeNote() {
       if (balance > 0) {
         document.getElementById('loyalty-points-section').style.display = 'block';
         document.getElementById('loyalty-balance-note').textContent = `You have ${balance} Groove Points available.`;
+        // Caps what can be TYPED to the customer's real balance. This can't
+        // also cap to the per-order redeem limit (Admin -> Store Settings ->
+        // "Max % of an order points can cover") since that limit depends on
+        // the cart total, which changes as items/coupon change — that side
+        // is instead explained after the fact in renderCheckoutSummary below,
+        // since silently applying fewer points than entered with no
+        // explanation is what actually confused a customer here.
+        const redeemInput = document.getElementById('loyalty-redeem');
+        if (redeemInput) redeemInput.max = String(balance);
       }
     } catch {
       // not logged in as a customer, or the call failed — leave the section hidden

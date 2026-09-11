@@ -2,6 +2,7 @@ const express = require('express');
 const store = require('../lib/dataStore');
 const { requireRole } = require('../middleware/auth');
 const email = require('../lib/email');
+const { generateInvoiceBuffer } = require('../lib/invoice');
 
 const router = express.Router();
 
@@ -54,7 +55,19 @@ router.post('/', async (req, res, next) => {
       redeemPoints: req.user ? Number(redeemPoints) || 0 : 0,
     });
 
-    email.sendOrderConfirmedEmail(order).catch((err) => console.error('sendOrderConfirmedEmail failed:', err.message));
+    // Fire-and-forget, same as every other notification in this app — but
+    // this one first has to render the invoice PDF into memory (via the same
+    // builder GET /:id/invoice streams from, so the emailed copy always
+    // matches what's viewable on the site) before it can attach it.
+    (async () => {
+      let invoiceBuffer = null;
+      try {
+        invoiceBuffer = await generateInvoiceBuffer(order, settings, store);
+      } catch (err) {
+        console.error('generateInvoiceBuffer failed (order confirmation email will send without the PDF attached):', err.message);
+      }
+      await email.sendOrderConfirmedEmail(order, invoiceBuffer);
+    })().catch((err) => console.error('sendOrderConfirmedEmail failed:', err.message));
 
     // COD orders don't go through Razorpay at all — they're "placed" and
     // awaiting delivery-time payment, which staff mark separately.
